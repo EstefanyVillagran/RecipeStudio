@@ -9,6 +9,24 @@ import java.net.DatagramSocket
 import java.net.InetAddress
 import java.net.SocketTimeoutException
 
+private fun esHostPrivadoOlocal(host: String): Boolean {
+    val h = host.lowercase().trim()
+    if (h.isBlank()) return true
+    if (h == "localhost" || h == "0.0.0.0" || h.startsWith("10.") || h.startsWith("192.168.") || h.startsWith("172.")) return true
+    if (h.contains("10.0.2.2") || h.contains("127.0.0.1") || h.contains("localhost")) return true
+
+    return try {
+        val address = InetAddress.getByName(h)
+        address.isAnyLocalAddress ||
+            address.isLoopbackAddress ||
+            address.isLinkLocalAddress ||
+            address.isSiteLocalAddress ||
+            address.isMulticastAddress
+    } catch (_: Exception) {
+        false
+    }
+}
+
 /** Dirección de la estación y sesión del QR guardadas en el celular (las escribe RecipeStudioScreen). */
 object ServerConfig {
     private const val PREFS = "kitchen_session_state"
@@ -19,16 +37,14 @@ object ServerConfig {
         val valor = url?.trim()?.trimEnd('/') ?: DEFAULT
         if (valor.isBlank()) return DEFAULT
 
-        val host = valor.lowercase()
-        val esLocalOPrivada = host.startsWith("http://10.") ||
-            host.startsWith("http://192.168.") ||
-            host.startsWith("http://127.0.0.1") ||
-            host.startsWith("http://localhost") ||
-            host.startsWith("http://0.0.0.0") ||
-            host.contains("10.0.2.2") ||
-            host.contains("10.30.77.8")
-
-        return if (esLocalOPrivada) DEFAULT else valor
+        return try {
+            val uri = java.net.URI(valor)
+            val host = uri.host ?: valor.substringAfter("//").substringBefore('/').substringBefore(':')
+            if (esHostPrivadoOlocal(host)) DEFAULT else valor
+        } catch (_: Exception) {
+            val host = valor.substringAfter("//").substringBefore('/').substringBefore(':').lowercase()
+            if (esHostPrivadoOlocal(host)) DEFAULT else valor
+        }
     }
 
     fun leer(context: Context): String =
@@ -75,8 +91,9 @@ object ServerDiscovery {
                 val buffer = ByteArray(256)
                 val respuesta = DatagramPacket(buffer, buffer.size)
                 socket.receive(respuesta)
-                val texto = String(respuesta.data, 0, respuesta.length)
-                if (texto.startsWith("KITCHENSYNC|")) texto.removePrefix("KITCHENSYNC|").trim() else null
+                val texto = String(respuesta.data, 0, respuesta.length).trim()
+                val destino = if (texto.startsWith("KITCHENSYNC|")) texto.removePrefix("KITCHENSYNC|").trim() else null
+                destino?.let { ServerConfig.normalizar(it) }?.takeIf { it != ServerConfig.DEFAULT || destino.contains("https://") }
             }
         } catch (_: SocketTimeoutException) {
             null

@@ -125,7 +125,7 @@ fun RecipeStudioScreen(onSoporte: () -> Unit = {}, onIrSustitutos: () -> Unit = 
     var sessionId by remember { mutableStateOf(sessionPrefs.getString("session_id", "demo-session") ?: "demo-session") }
     var sessionToken by remember { mutableStateOf(sessionPrefs.getString("session_token", "demo-token") ?: "demo-token") }
     var serverBaseUrl by remember {
-        mutableStateOf(sessionPrefs.getString("server_base_url", ServerConfig.DEFAULT) ?: ServerConfig.DEFAULT)
+        mutableStateOf(ServerConfig.normalizar(sessionPrefs.getString("server_base_url", ServerConfig.DEFAULT)))
     }
     var recetaFinalizada by remember { mutableStateOf(false) }
 
