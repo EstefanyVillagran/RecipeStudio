@@ -1,6 +1,7 @@
 """Pruebas de caja negra del servidor (Práctica 8). Ejecutar:  python -m unittest test_server -v"""
 import http.server
 import json
+import os
 import threading
 import unittest
 import urllib.error
@@ -203,6 +204,19 @@ class TestSoporte(Base):
         self.assertEqual(server.responder_descubrimiento(b"KITCHENSYNC?", "192.168.1.5"),
                          f"KITCHENSYNC|http://192.168.1.5:{server.PORT}".encode())
         self.assertIsNone(server.responder_descubrimiento(b"otra cosa", "192.168.1.5"))
+
+    def test_base_url_publica_usa_render_y_no_ip_local(self):
+        prev = os.environ.get("KITCHENSYNC_HOST")
+        os.environ["KITCHENSYNC_HOST"] = "https://recipestudio.onrender.com"
+        try:
+            self.assertEqual(server.get_local_ip(), "https://recipestudio.onrender.com")
+            c = server.Core(base_url=None)
+            self.assertEqual(c.base_url, "https://recipestudio.onrender.com")
+        finally:
+            if prev is None:
+                os.environ.pop("KITCHENSYNC_HOST", None)
+            else:
+                os.environ["KITCHENSYNC_HOST"] = prev
 
     def test_pagina_principal_incluye_dashboard_y_no_soporte(self):
         with urllib.request.urlopen(self.url + "/") as r:

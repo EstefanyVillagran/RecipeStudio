@@ -15,6 +15,7 @@ Ejecutar:  py server.py      (variables opcionales: PORT, KITCHENSYNC_HOST,
 import hashlib
 import hmac
 import http.server
+import ipaddress
 import json
 import os
 import re
@@ -53,9 +54,41 @@ class ApiError(Exception):
         self.status, self.mensaje = status, mensaje
 
 
+def _normalizar_url_publica(valor):
+    texto = (valor or "").strip()
+    if not texto:
+        return None
+    if texto.startswith("//"):
+        texto = "https:" + texto
+    if "://" not in texto:
+        texto = "https://" + texto
+    parsed = urllib.parse.urlparse(texto)
+    host = parsed.hostname
+    if not host:
+        return None
+    try:
+        ip = ipaddress.ip_address(host)
+        if ip.is_loopback or ip.is_private or ip.is_link_local or ip.is_multicast or ip.is_unspecified:
+            return None
+    except ValueError:
+        if host.lower() in {"localhost", "0.0.0.0"}:
+            return None
+    scheme = parsed.scheme or "https"
+    port = parsed.port
+    if port in (None, 80, 443):
+        netloc = host
+    else:
+        netloc = f"{host}:{port}"
+    return f"{scheme}://{netloc}"
+
+
 def get_local_ip():
-    if os.environ.get("KITCHENSYNC_HOST"):
-        return os.environ["KITCHENSYNC_HOST"]
+    for clave in ("KITCHENSYNC_HOST", "KITCHENSYNC_PUBLIC_URL"):
+        valor = os.environ.get(clave)
+        if valor:
+            normalizada = _normalizar_url_publica(valor)
+            if normalizada:
+                return normalizada
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
             s.connect(("8.8.8.8", 80))   # no envía datos; solo elige la interfaz de red
@@ -105,7 +138,15 @@ class Core:
 
     @property
     def base_url(self):
-        return self._base_fija or f"http://{get_local_ip()}:{PORT}"
+        if self._base_fija:
+            return self._base_fija
+        for clave in ("KITCHENSYNC_HOST", "KITCHENSYNC_PUBLIC_URL"):
+            valor = os.environ.get(clave)
+            if valor:
+                normalizada = _normalizar_url_publica(valor)
+                if normalizada:
+                    return normalizada
+        return f"http://{get_local_ip()}:{PORT}"
 
     # ---------- usuarios y login ----------
     @staticmethod
@@ -406,8 +447,12 @@ def responder_descubrimiento(datos, ip_local):
 
 
 def _ip_hacia(destino):
-    if os.environ.get("KITCHENSYNC_HOST"):
-        return os.environ["KITCHENSYNC_HOST"]
+    for clave in ("KITCHENSYNC_HOST", "KITCHENSYNC_PUBLIC_URL"):
+        valor = os.environ.get(clave)
+        if valor:
+            normalizada = _normalizar_url_publica(valor)
+            if normalizada:
+                return urllib.parse.urlparse(normalizada).hostname or valor
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
             s.connect((destino, 9))

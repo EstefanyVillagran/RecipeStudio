@@ -313,7 +313,7 @@ fun RecipeStudioScreen(onSoporte: () -> Unit = {}, onIrSustitutos: () -> Unit = 
                     estaVinculado = json.optBoolean("conectado", estaVinculado)
                     val connectedBaseUrl = json.optString("serverBaseUrl", serverBaseUrl)
                     if (connectedBaseUrl.isNotBlank()) {
-                        serverBaseUrl = connectedBaseUrl.trimEnd('/')
+                        serverBaseUrl = ServerConfig.normalizar(connectedBaseUrl)
                     }
 
                     val ingredientesActuales = listaIngredientes
@@ -505,7 +505,7 @@ fun RecipeStudioScreen(onSoporte: () -> Unit = {}, onIrSustitutos: () -> Unit = 
                                         val normalizedBase = if (baseUrl.endsWith("/")) baseUrl.dropLast(1) else baseUrl
                                         "$normalizedBase/conectar?sessionId=$qrSessionId&token=$token"
                                     }
-                                    serverBaseUrl = connectUrl.substringBefore("/conectar")
+                                    serverBaseUrl = ServerConfig.normalizar(connectUrl.substringBefore("/conectar"))
 
                                     val url = URL(connectUrl)
                                     val connection = url.openConnection() as HttpURLConnection

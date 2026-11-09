@@ -22,7 +22,7 @@ data class RecipeState(
 data class SessionQrPayload(
     val sessionId: String,
     val token: String,
-    val baseUrl: String = "http://localhost:8080"
+    val baseUrl: String = "https://recipestudio.onrender.com"
 ) {
     fun toConnectionUrl(): String {
         val normalizedBase = baseUrl.trimEnd('/')

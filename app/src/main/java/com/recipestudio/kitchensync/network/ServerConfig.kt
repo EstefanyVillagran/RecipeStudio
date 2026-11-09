@@ -13,13 +13,30 @@ import java.net.SocketTimeoutException
 object ServerConfig {
     private const val PREFS = "kitchen_session_state"
     private const val KEY = "server_base_url"
-    const val DEFAULT = "http://10.0.2.2:8080" // emulador de Android Studio -> PC anfitriona
+    const val DEFAULT = "https://recipestudio.onrender.com" // backend publicado en Render
+
+    fun normalizar(url: String?): String {
+        val valor = url?.trim()?.trimEnd('/') ?: DEFAULT
+        if (valor.isBlank()) return DEFAULT
+
+        val host = valor.lowercase()
+        val esLocalOPrivada = host.startsWith("http://10.") ||
+            host.startsWith("http://192.168.") ||
+            host.startsWith("http://127.0.0.1") ||
+            host.startsWith("http://localhost") ||
+            host.startsWith("http://0.0.0.0") ||
+            host.contains("10.0.2.2") ||
+            host.contains("10.30.77.8")
+
+        return if (esLocalOPrivada) DEFAULT else valor
+    }
 
     fun leer(context: Context): String =
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, DEFAULT) ?: DEFAULT
+        normalizar(context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, DEFAULT))
 
     fun guardar(context: Context, url: String) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY, url.trim().trimEnd('/')).apply()
+        val limpio = normalizar(url)
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY, limpio).apply()
     }
 
     /** Sesión vinculada por QR, o null si el celular todavía no escaneó el código. */
