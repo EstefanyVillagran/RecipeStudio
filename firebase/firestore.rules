@@ -1,0 +1,56 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function perfil() { return get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data; }
+    function tienePerfil() { return signedIn() && exists(/databases/$(database)/documents/usuarios/$(request.auth.uid)); }
+    function esAdmin() { return tienePerfil() && perfil().rol == 'admin'; }
+    function esStaff() { return tienePerfil() && perfil().rol in ['admin', 'agente']; }
+
+    // Perfiles de admin/agente: cada uno solo lee el suyo. Se crean a mano desde la consola.
+    match /usuarios/{uid} {
+      allow read: if signedIn() && request.auth.uid == uid;
+      allow write: if false;
+    }
+
+    match /reportes/{id} {
+      // Celular (anónimo vinculado por QR) o staff: crear solo reportes propios y válidos.
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(
+             ['titulo', 'descripcion', 'categoria', 'prioridad', 'estado', 'dispositivo', 'ownerUid', 'asignadoA', 'creadoEn'])
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.titulo is string
+        && request.resource.data.titulo.size() >= 3 && request.resource.data.titulo.size() <= 80
+        && request.resource.data.descripcion is string
+        && request.resource.data.descripcion.size() >= 5 && request.resource.data.descripcion.size() <= 500
+        && request.resource.data.prioridad in ['Baja', 'Media', 'Alta']
+        && request.resource.data.estado == 'Nuevo'
+        && request.resource.data.asignadoA == null;
+
+      // Cada celular lee solo lo suyo; admin y agente leen todo.
+      allow read: if signedIn() && (resource.data.ownerUid == request.auth.uid || esStaff());
+
+      // Staff cambia estado; solo el admin asigna. Nadie edita título, dueño ni contenido.
+      allow update: if esStaff()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['estado', 'asignadoA', 'notas'])
+        && (esAdmin() || !request.resource.data.diff(resource.data).affectedKeys().hasAny(['asignadoA']))
+        && request.resource.data.estado in ['Nuevo', 'En proceso', 'Resuelto']
+        && (!('notas' in request.resource.data) || request.resource.data.notas.size() <= 50);
+
+      allow delete: if esAdmin();
+    }
+
+    // Recetas terminadas de cada celular (foto final comprimida + ingredientes). Solo el dueño.
+    match /progreso/{uid}/recetas/{rid} {
+      allow read: if signedIn() && request.auth.uid == uid;
+      allow create, update: if signedIn() && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['nombre', 'hecha', 'completados', 'actualizadoEn', 'fotoB64'])
+        && (!('fotoB64' in request.resource.data) || request.resource.data.fotoB64.size() < 250000);
+      allow delete: if signedIn() && request.auth.uid == uid;
+    }
+
+    // Todo lo demás, cerrado.
+    match /{document=**} { allow read, write: if false; }
+  }
+}

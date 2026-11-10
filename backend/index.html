@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RecipeStudio - Estación de Cocina Dashboard</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        body { background-color: #F7F4EE; color: #1E1E1E; padding: 24px; min-height: 100vh; }
+
+        #waiting-screen {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 80vh;
+            text-align: center;
+        }
+        .qr-card {
+            background: white;
+            padding: 32px;
+            border-radius: 24px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.08);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin-top: 20px;
+        }
+
+        #dashboard-screen { display: none; }
+
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; }
+        .logo-title { font-size: 24px; font-weight: bold; }
+        .status-badge { background: #E8F2EA; color: #558B6E; padding: 6px 14px; border-radius: 20px; font-weight: bold; font-size: 13px; }
+
+        .main-container { display: grid; grid-template-columns: 320px 1fr; gap: 24px; }
+        .card { background: white; border-radius: 20px; padding: 20px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); }
+        .card-dark { background: #222428; color: white; border-radius: 20px; padding: 20px; }
+
+        .recipe-meta { font-size: 11px; font-weight: bold; color: #D65836; text-transform: uppercase; margin-bottom: 6px; }
+        .recipe-title { font-size: 32px; font-weight: bold; margin-bottom: 6px; }
+        .recipe-sub { font-size: 13px; color: #666; margin-bottom: 16px; }
+
+        .ingredient-item { display: flex; justify-content: space-between; padding: 10px 0; font-size: 14px; border-bottom: 1px solid #eee; }
+        .completed { text-decoration: line-through; opacity: 0.5; }
+
+        .timer-bar { background: #222428; color: white; border-radius: 20px; padding: 20px; display: flex; justify-content: space-between; align-items: center; margin-top: 24px; }
+        .timer-time { font-size: 36px; font-weight: bold; }
+
+        .admin-btn { position: fixed; top: 14px; right: 14px; background: #222428; color: #fff; border: 0; border-radius: 20px; padding: 8px 14px; font-size: 13px; cursor: pointer; z-index: 20; }
+        .modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 30; align-items: center; justify-content: center; padding: 16px; }
+        .modal.open { display: flex; }
+        .modal-box { background: #fff; border-radius: 20px; padding: 24px; width: 100%; max-width: 860px; max-height: 90vh; overflow: auto; }
+        .modal-box input, .modal-box select, .modal-box textarea { padding: 8px 10px; border: 1px solid #ccc; border-radius: 8px; font-size: 14px; }
+        .btn { background: #D65836; color: #fff; border: 0; border-radius: 10px; padding: 8px 14px; font-weight: bold; cursor: pointer; }
+        .btn-sec { background: #eee; color: #222; }
+        table.rep { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 12px; }
+        table.rep th, table.rep td { text-align: left; padding: 8px; border-bottom: 1px solid #eee; vertical-align: top; }
+        .tag { padding: 2px 8px; border-radius: 8px; font-size: 11px; font-weight: bold; background: #eee; }
+        .tag.Alta { background: #fbe0d9; color: #b3391b; } .tag.Resuelto { background: #E8F2EA; color: #558B6E; }
+        .err { color: #b3391b; font-size: 13px; margin-top: 8px; }
+    </style>
+</head>
+<body>
+
+    <!-- 1. PANTALLA DE ESPERA (QR) -->
+    <div id="waiting-screen">
+        <h1 style="font-size: 32px; color: #1E1E1E; margin-bottom: 8px;">🍳 RecipeStudio Dashboard</h1>
+        <p style="color: #666; font-size: 16px;">Inicia sesión en la estación escaneando el código QR desde la App Móvil</p>
+
+        <div class="qr-card">
+            <span style="font-size: 12px; font-weight: bold; color: #D65836; letter-spacing: 1px;">CÓDIGO DE SESIÓN ACTIVA</span>
+            <div id="qrcode-large" style="margin: 20px 0;"></div>
+            <p style="font-size: 13px; color: #888;">ID Estación: <strong id="station-host" style="color:#222;">__SERVER_HOST__:__SERVER_PORT__</strong></p>
+            <p style="font-size: 12px; color: #D65836; margin-top: 12px; font-weight: bold;">🔴 Esperando conexión del celular...</p>
+        </div>
+    </div>
+
+    <!-- 2. DASHBOARD DESBLOQUEADO -->
+    <div id="dashboard-screen">
+        <div class="header">
+            <div class="logo-title">🍳 RecipeStudio <span style="font-size:14px; color:#666; font-weight:normal;">| Modo Cocina Dashboard</span></div>
+            <div style="display:flex;gap:10px;align-items:center;">
+                <button class="btn" id="btn-invitar" style="background:#D65836;color:#fff;border:0;padding:8px 14px;border-radius:10px;font-weight:bold;cursor:pointer;">➕ Invitar otro celular</button>
+                <div class="status-badge">🟢 Conectado con Estación Móvil</div>
+            </div>
+        </div>
+
+        <div class="recipe-meta" id="categoria">COCINA ITALIANA • RECETA FAMILIAR</div>
+        <div class="recipe-title" id="titulo">Pasta al pomodoro</div>
+        <div class="recipe-sub" id="subtitulo">⏱ 35 min  •  Dificultad media  •  4 porciones</div>
+
+        <div class="main-container">
+            <div>
+                <div class="card">
+                    <div style="display:flex; justify-content:space-between; margin-bottom:12px;">
+                        <span style="font-weight:bold;">Ingredientes</span>
+                        <span style="background:#E8F2EA; color:#558B6E; padding:2px 8px; border-radius:8px; font-weight:bold; font-size:12px;" id="count">3/6</span>
+                    </div>
+                    <div id="lista-ingredientes">
+                        <div class="ingredient-item completed"><span>✔️ Spaghetti artesanal</span><span>400 g</span></div>
+                        <div class="ingredient-item completed"><span>✔️ Tomates maduros</span><span>6 pzas</span></div>
+                        <div class="ingredient-item completed"><span>✔️ Ajo fresco</span><span>2 dientes</span></div>
+                        <div class="ingredient-item"><span>⬜ Albahaca fresca</span><span>1 manojo</span></div>
+                        <div class="ingredient-item"><span>⬜ Aceite de oliva</span><span>45 ml</span></div>
+                        <div class="ingredient-item"><span>⬜ Sal de mar y pimienta</span><span>Al gusto</span></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card-dark" style="display:flex; flex-direction:column; justify-content:space-between;">
+                <div>
+                    <span style="background:#000; padding:6px 12px; border-radius:8px; font-weight:bold; font-size:12px;" id="paso-num">PASO 03</span>
+                    <h2 style="font-size:28px; margin-top:16px;" id="paso-titulo">Integra los sabores</h2>
+                    <p style="font-size:16px; color:#ccc; margin-top:12px; line-height:24px;" id="paso-desc">
+                        Pasa la pasta a la sartén, añade un poco del agua de cocción y mezcla energéticamente. Termina con albahaca y aceite de oliva.
+                    </p>
+                </div>
+                
+                <div style="background:#2A2B2E; padding:16px; border-radius:12px; margin-top:20px; border-left:4px solid #D65836;">
+                    <span style="font-size:11px; color:#D65836; font-weight:bold;">CONSEJO DEL CHEF</span>
+                    <p style="font-size:13px; color:#eee; margin-top:4px;" id="chef-tip">Conserva una taza del agua de cocción. El almidón ayudará a que la salsa se agarre a la pasta.</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="timer-bar">
+            <div>
+                <span style="font-size:12px; color:#aaa;">TEMPORIZADOR KITCHENSYNC (Sincronizado)</span>
+                <div class="timer-time" id="timer">03:00</div>
+            </div>
+        </div>
+    </div>
+
+
+    <div class="modal" id="modal-invitar"><div class="modal-box" style="text-align:center;max-width:380px;">
+        <h2>➕ Invitar otro celular</h2>
+        <p style="font-size:13px;color:#666;margin:8px 0;">Escanea este código con la app (pantalla Escanear QR) para unirte a la misma cocina.</p>
+        <div id="qrcode-invitar" style="display:flex;justify-content:center;margin:14px 0;"></div>
+        <button class="btn btn-sec" id="cerrar-invitar">Cerrar</button>
+    </div></div>
+
+    <script>
+        const serverHost = "__SERVER_HOST__";
+        const serverPort = "__SERVER_PORT__";
+        document.getElementById('station-host').textContent = serverPort ? `${serverHost}:${serverPort}` : serverHost;
+
+        let qrDibujado = null;
+        function cargarQr() {
+            fetch('/sesion').then((r) => r.ok ? r.json() : null).then((s) => {
+                if (!s) return;
+                if (s.panelKey) sessionStorage.setItem('ks_panel', s.panelKey);
+                if (qrDibujado === s.qrUrl) return;
+                qrDibujado = s.qrUrl;
+                const cont = document.getElementById('qrcode-large');
+                cont.innerHTML = '';
+                new QRCode(cont, { text: s.qrUrl, width: 220, height: 220 });
+            }).catch(() => {});
+        }
+        cargarQr();
+        document.getElementById('btn-invitar').onclick = () => {
+            fetch('/sesion?panelKey=' + encodeURIComponent(sessionStorage.getItem('ks_panel') || '')).then((r) => r.ok ? r.json() : null).then((s) => {
+                if (!s) { alert('No se pudo generar la invitación. Recarga esta página.'); return; }
+                const cont = document.getElementById('qrcode-invitar');
+                cont.innerHTML = '';
+                new QRCode(cont, { text: s.qrUrl, width: 220, height: 220 });
+                document.getElementById('modal-invitar').classList.add('open');
+            }).catch(() => {});
+        };
+        document.getElementById('cerrar-invitar').onclick = () => document.getElementById('modal-invitar').classList.remove('open');
+        setInterval(() => { if (document.getElementById('waiting-screen').style.display !== 'none') cargarQr(); }, 60000);
+
+        const recipeCatalog = {
+            'Pasta al pomodoro': {
+                categoria: 'COCINA ITALIANA • RECETA FAMILIAR',
+                subtitulo: '⏱ 35 min  •  Dificultad media  •  4 porciones',
+                ingredientes: [
+                    { nombre: 'Spaghetti artesanal', cantidad: '400 g' },
+                    { nombre: 'Tomates maduros', cantidad: '6 pzas' },
+                    { nombre: 'Ajo fresco', cantidad: '2 dientes' },
+                    { nombre: 'Albahaca fresca', cantidad: '1 manojo' },
+                    { nombre: 'Aceite de oliva extra virgen', cantidad: '45 ml' },
+                    { nombre: 'Sal de mar y pimienta', cantidad: 'Al gusto' }
+                ],
+                paso: 'PASO 03',
+                pasoTitulo: 'Integra los sabores',
+                pasoDesc: 'Pasa la pasta a la sartén, añade un poco del agua de cocción y mezcla energéticamente. Termina con albahaca y aceite de oliva.',
+                chefTip: 'Conserva una taza del agua de cocción. El almidón ayudará a que la salsa se agarre a la pasta.'
+            },
+            'Enchiladas Suizas': {
+                categoria: 'COCINA MEXICANA • TRADICIONAL',
+                subtitulo: '⏱ 45 min  •  Dificultad alta  •  3 porciones',
+                ingredientes: [
+                    { nombre: 'Tortillas de maíz', cantidad: '12 pzas' },
+                    { nombre: 'Pollo cocido deshebrado', cantidad: '500 g' },
+                    { nombre: 'Tomatillo verde', cantidad: '8 pzas' },
+                    { nombre: 'Queso manchego rallado', cantidad: '200 g' }
+                ],
+                paso: 'PASO 02',
+                pasoTitulo: 'Prepara la mezcla final',
+                pasoDesc: 'Baña las enchiladas con la salsa cremosa, añade queso y gratina hasta que queden doradas y suaves.',
+                chefTip: 'La crema ácida fresca aporta una textura final más cremosa y equilibrada.'
+            }
+        };
+
+        function normalizeIngredientName(value) {
+            return (value || '').toLowerCase().replace(/\s+/g, ' ').replace('extra virgen', '').trim();
+        }
+
+        function renderDashboard(data) {
+            if (!data) return;
+
+            if (data.conectado) {
+                document.getElementById('waiting-screen').style.display = 'none';
+                document.getElementById('dashboard-screen').style.display = 'block';
+            }
+
+            const recipeName = data.receta || 'Pasta al pomodoro';
+            const recipeData = recipeCatalog[recipeName] || recipeCatalog['Pasta al pomodoro'];
+            document.getElementById('categoria').textContent = recipeData.categoria;
+            document.getElementById('titulo').textContent = recipeName;
+            document.getElementById('subtitulo').textContent = recipeData.subtitulo;
+            document.getElementById('paso-num').textContent = recipeData.paso;
+            document.getElementById('paso-titulo').textContent = recipeData.pasoTitulo;
+            document.getElementById('paso-desc').textContent = recipeData.pasoDesc;
+            document.getElementById('chef-tip').textContent = recipeData.chefTip;
+
+            const ingredientes = data.ingredientes || {};
+            const list = document.getElementById('lista-ingredientes');
+            list.innerHTML = '';
+
+            const entries = recipeData.ingredientes.map((ingredient) => {
+                const normalized = normalizeIngredientName(ingredient.nombre);
+                const matchingKey = Object.keys(ingredientes).find((key) => normalizeIngredientName(key) === normalized);
+                const completed = matchingKey ? Boolean(ingredientes[matchingKey]) : false;
+                return { ...ingredient, completed };
+            });
+
+            entries.forEach((ingredient) => {
+                const row = document.createElement('div');
+                row.className = 'ingredient-item' + (ingredient.completed ? ' completed' : '');
+                row.innerHTML = `<span>${ingredient.completed ? '✔️' : '⬜'} ${ingredient.nombre}</span><span>${ingredient.cantidad}</span>`;
+                list.appendChild(row);
+            });
+
+            const completeCount = entries.filter((ingredient) => ingredient.completed).length;
+            document.getElementById('count').textContent = `${completeCount}/${entries.length}`;
+            document.getElementById('timer').textContent = data.timer || '03:00';
+        }
+
+        function pollState() {
+            fetch('/estado')
+                .then((res) => res.json())
+                .then((data) => renderDashboard(data))
+                .catch(() => {});
+        }
+
+        const channel = new BroadcastChannel('kitchen_sync_channel');
+        channel.onmessage = (event) => {
+            const message = event.data || {};
+            if (message.type === 'CHANGE_RECIPE' || message.type === 'INGREDIENT_TOGGLE' || message.type === 'TIMER_TICK' || message.type === 'TIMER_TOGGLE' || message.type === 'TIMER_RESET') {
+                pollState();
+            }
+        };
+
+        // Consultar el estado del servidor Python cada 800ms
+        setInterval(pollState, 800);
+        pollState();
+    </script>
+</body>
+</html>

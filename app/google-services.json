@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "670528320389",
+    "project_id": "recipestudio-e9730",
+    "storage_bucket": "recipestudio-e9730.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:670528320389:android:00ef10c16235e5c0ce8aec",
+        "android_client_info": {
+          "package_name": "com.recipestudio.kitchensync"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyADABKAzjhW_AwIjKy5aPXoZw7-adDWa_g"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

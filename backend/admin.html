@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RecipeStudio - Panel de Soporte</title>
+<style>
+  * { box-sizing: border-box; font-family: 'Segoe UI', Tahoma, sans-serif; }
+  body { background:#F7F4EE; color:#1E1E1E; margin:0; padding:24px; }
+  .card { background:#fff; border-radius:16px; padding:20px; box-shadow:0 4px 12px rgba(0,0,0,.06); max-width:1100px; margin:0 auto 16px; }
+  input, select, button { padding:9px 12px; border-radius:10px; border:1px solid #ccc; font-size:14px; }
+  button { background:#D65836; color:#fff; border:0; font-weight:bold; cursor:pointer; }
+  button.sec { background:#222428; }
+  .stats { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin:14px 0; }
+  .stat { background:#FAF1E6; border-radius:12px; padding:12px; text-align:center; }
+  .stat b { display:block; font-size:24px; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th, td { text-align:left; padding:8px; border-bottom:1px solid #eee; vertical-align:top; }
+  .tag { padding:2px 8px; border-radius:8px; font-size:11px; font-weight:bold; background:#eee; }
+  .Alta { background:#fbe0d9; color:#b3391b; } .Resuelto { background:#E8F2EA; color:#558B6E; }
+  .err { color:#b3261e; font-size:13px; min-height:18px; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .nota { color:#558B6E; font-size:12px; margin-top:4px; }
+</style>
+</head>
+<body>
+<div class="card" id="login">
+  <h2>🔧 Panel de Soporte RecipeStudio</h2>
+  <p>Solo administrador y agentes (cuentas de Firebase Authentication).</p>
+  <div class="row">
+    <input id="correo" type="email" placeholder="correo" autocomplete="username">
+    <input id="clave" type="password" placeholder="contraseña" autocomplete="current-password">
+    <button id="entrar">Entrar</button>
+  </div>
+  <div class="err" id="errLogin"></div>
+</div>
+
+<div class="card" id="panel" style="display:none">
+  <div class="row" style="justify-content:space-between">
+    <h2 id="titulo">Reportes</h2>
+    <div><span id="quien"></span> <button class="sec" id="salir">Salir</button></div>
+  </div>
+  <div class="stats">
+    <div class="stat"><b id="sTotal">0</b>Total</div>
+    <div class="stat"><b id="sNuevo">0</b>Nuevos</div>
+    <div class="stat"><b id="sProceso">0</b>En proceso</div>
+    <div class="stat"><b id="sResuelto">0</b>Resueltos</div>
+  </div>
+  <div class="row">
+    <select id="filtro"><option>Todos</option><option>Nuevo</option><option>En proceso</option><option>Resuelto</option></select>
+    <input id="buscar" placeholder="Buscar por título, ID o dispositivo" size="32">
+  </div>
+  <div class="err" id="errPanel"></div>
+  <table>
+    <thead><tr><th>Reporte</th><th>Prioridad</th><th>Estado</th><th>Asignado a</th><th>Notas</th><th></th></tr></thead>
+    <tbody id="filas"></tbody>
+  </table>
+</div>
+
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+  import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged }
+    from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+  import { getFirestore, collection, doc, getDoc, onSnapshot, updateDoc, deleteDoc, arrayUnion, query, where }
+    from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyC1eQzbzkiQVBAhsevlPeUng0zdcChfuKk",
+    authDomain: "recipestudio-e9730.firebaseapp.com",
+    projectId: "recipestudio-e9730"
+  };
+
+  const app = initializeApp(firebaseConfig);
+  const auth = getAuth(app);
+  const db = getFirestore(app);
+  const $ = id => document.getElementById(id);
+  let rol = null, correoActual = "", desuscribir = null, lista = [];
+
+  const MENSAJES = {
+    "auth/invalid-credential": "Correo o contraseña incorrectos",
+    "auth/invalid-email": "El correo no es válido",
+    "auth/user-disabled": "La cuenta está deshabilitada",
+    "auth/too-many-requests": "Demasiados intentos, espera un momento",
+    "auth/operation-not-allowed": "Activa 'Correo electrónico/contraseña' en Firebase > Authentication > Método de acceso",
+    "auth/network-request-failed": "Sin conexión a internet"
+  };
+
+  $("entrar").onclick = async () => {
+    $("errLogin").textContent = "";
+    try {
+      await signInWithEmailAndPassword(auth, $("correo").value.trim(), $("clave").value);
+    } catch (e) {
+      $("errLogin").textContent = (MENSAJES[e.code] || "Error de acceso") + " (" + e.code + ")";
+    }
+  };
+  $("salir").onclick = () => signOut(auth);
+  $("filtro").onchange = () => pintar();
+  $("buscar").oninput = () => pintar();
+
+  onAuthStateChanged(auth, async user => {
+    if (desuscribir) { desuscribir(); desuscribir = null; }
+    if (!user) { $("login").style.display = ""; $("panel").style.display = "none"; return; }
+    let perfil;
+    try { perfil = await getDoc(doc(db, "usuarios", user.uid)); }
+    catch (e) { $("errLogin").textContent = "No se pudo leer tu perfil (" + e.code + "). ¿Publicaste las reglas?"; await signOut(auth); return; }
+    if (!perfil.exists() || !["admin", "agente"].includes(perfil.data().rol)) {
+      $("errLogin").textContent = "La cuenta entró, pero falta el documento usuarios/" + user.uid + " con el campo rol = admin o agente";
+      await signOut(auth);
+      return;
+    }
+    rol = perfil.data().rol; correoActual = user.email;
+    $("login").style.display = "none";
+    $("panel").style.display = "";
+    $("quien").textContent = user.email + " (" + rol + ")";
+    const base = collection(db, "reportes");
+    const consulta = rol === "admin" ? base : query(base, where("asignadoA", "==", String(correoActual).toLowerCase()));
+    desuscribir = onSnapshot(consulta, snap => {
+      lista = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => b.creadoEn - a.creadoEn);
+      $("errPanel").textContent = "";
+      pintar();
+    }, e => { $("errPanel").textContent = "No se pudieron leer los reportes (" + e.code + ")"; });
+  });
+
+  function celda(texto) { const td = document.createElement("td"); td.textContent = texto ?? ""; return td; }
+
+  function pintar() {
+    const f = $("filtro").value, q = $("buscar").value.trim().toLowerCase();
+    $("sTotal").textContent = lista.length;
+    $("sNuevo").textContent = lista.filter(r => r.estado === "Nuevo").length;
+    $("sProceso").textContent = lista.filter(r => r.estado === "En proceso").length;
+    $("sResuelto").textContent = lista.filter(r => r.estado === "Resuelto").length;
+    const visibles = lista.filter(r => (f === "Todos" || r.estado === f) &&
+      (!q || (r.titulo + r.id + (r.dispositivo || "")).toLowerCase().includes(q)));
+    $("titulo").textContent = (rol === "admin" ? "Reportes (" : "Reportes asignados a ti (") + visibles.length + ")";
+    const tbody = $("filas");
+    tbody.replaceChildren();
+    for (const r of visibles) {
+      const tr = document.createElement("tr");
+      const tdRep = document.createElement("td");
+      const t = document.createElement("b"); t.textContent = r.titulo;
+      const meta = document.createElement("div"); meta.style.color = "#777";
+      meta.textContent = r.id + " · " + new Date(r.creadoEn).toLocaleString() + " · " + (r.dispositivo || "") + " · " + (r.categoria || "");
+      const desc = document.createElement("div"); desc.textContent = r.descripcion;
+      tdRep.append(t, meta, desc); tr.append(tdRep);
+      const tdP = document.createElement("td"); const tag = document.createElement("span");
+      tag.className = "tag " + r.prioridad; tag.textContent = r.prioridad; tdP.append(tag); tr.append(tdP);
+
+      const tdE = document.createElement("td"); const sel = document.createElement("select");
+      for (const e of ["Nuevo", "En proceso", "Resuelto"]) { const o = new Option(e, e); o.selected = e === r.estado; sel.add(o); }
+      sel.onchange = () => cambiar(r.id, { estado: sel.value }); tdE.append(sel); tr.append(tdE);
+
+      const tdA = document.createElement("td");
+      if (rol === "admin") {
+        const inp = document.createElement("input"); inp.value = r.asignadoA ?? ""; inp.placeholder = "correo del agente"; inp.size = 16;
+        inp.onchange = () => cambiar(r.id, { asignadoA: inp.value.trim().toLowerCase() || null }); tdA.append(inp);
+      } else tdA.textContent = r.asignadoA ?? "sin asignar";
+      tr.append(tdA);
+
+      const tdN = document.createElement("td");
+      for (const n of (r.notas || [])) { const d = document.createElement("div"); d.className = "nota"; d.textContent = "📝 " + n.autor + ": " + n.texto; tdN.append(d); }
+      const ni = document.createElement("input"); ni.placeholder = "Nueva nota"; ni.size = 16;
+      ni.onkeydown = ev => { if (ev.key === "Enter" && ni.value.trim()) { cambiar(r.id, { notas: arrayUnion({ autor: correoActual, texto: ni.value.trim(), hora: Date.now() }) }); } };
+      tdN.append(ni); tr.append(tdN);
+
+      const tdX = document.createElement("td");
+      if (rol === "admin") {
+        const b = document.createElement("button"); b.className = "sec"; b.textContent = "Eliminar";
+        b.onclick = async () => { if (confirm("¿Eliminar " + r.id + "?")) await cambiar(r.id, null); };
+        tdX.append(b);
+      }
+      tr.append(tdX); tbody.append(tr);
+    }
+  }
+
+  async function cambiar(id, cambios) {
+    $("errPanel").textContent = "";
+    try {
+      if (cambios === null) await deleteDoc(doc(db, "reportes", id));
+      else await updateDoc(doc(db, "reportes", id), cambios);
+    } catch (e) { $("errPanel").textContent = "Operación no permitida (" + (e.code || "error") + ")"; }
+  }
+</script>
+</body>
+</html>

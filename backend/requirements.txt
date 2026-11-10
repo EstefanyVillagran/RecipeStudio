@@ -1,0 +1,2 @@
+# No external Python packages are required for this service.
+# The app runs with Python standard library modules only.
