@@ -69,4 +69,4 @@ Para completar el entregable:
 
 ## Conclusión técnica
 
-La automatización permite detectar errores de cálculo, comunicación y persistencia antes de que lleguen a una versión publicada. Las pruebas unitarias fijan las reglas de negocio, las pruebas de integración verifican que los componentes colaboren correctamente y el pipeline impide que se acepten cambios que rompan compilación, pruebas o análisis lint. De este modo, nuevas modificaciones pueden validarse de forma repetible y rápida, reduciendo regresiones y conservando la calidad técnica de RecipeStudio/KitchenSync.
+La automatización permite detectar errores de cálculo, comunicación y persistencia antes de que lleguen a una versión publicada. Las pruebas unitarias fijan las reglas de negocio, las pruebas de integración verifican que los componentes colaboren correctamente y el pipeline impide que se acepten cambios que rompan compilación, pruebas o análisis lint. De este modo, nuevas modificaciones pueden validarse de forma repetable y rápida, reduciendo regresiones y conservando la calidad técnica de RecipeStudio/KitchenSync.
