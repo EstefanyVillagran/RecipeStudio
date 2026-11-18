@@ -53,7 +53,7 @@ class Practicas13IntegrationTest {
         val recuperada = database.obtenerRecetaPorId("receta-1")!!
         recuperada.listaIngredientes[1].marcarComoUsado()
 
-        assertTrue(database.obtenerIngredientes()[0].esCompletado || database.obtenerIngredientes().size == 1)
+        assertEquals("Tomate", database.obtenerIngredientes()[0].nombre)
         assertEquals(50f, recuperada.obtenerProgresoPreparacion(), 0.001f)
     }
 }
