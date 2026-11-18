@@ -3,6 +3,7 @@ package com.recipestudio.kitchensync.ui
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Forum
+import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Restaurant
 import androidx.compose.material.icons.filled.SupportAgent
 import androidx.compose.material.icons.filled.SwapHoriz
@@ -34,18 +35,23 @@ fun MainShell() {
         "Receta" to Icons.Default.Restaurant,
         "Sustitutos" to Icons.Default.SwapHoriz,
         "Chat" to Icons.Default.Forum,
-        "Reportar" to Icons.Default.SupportAgent
+        "Muro" to Icons.Default.PhotoLibrary,
+        "Ayuda" to Icons.Default.SupportAgent
     )
 
     Scaffold(
         bottomBar = {
-            NavigationBar {
+            NavigationBar(containerColor = androidx.compose.ui.graphics.Color.White) {
                 items.forEachIndexed { i, (nombre, icono) ->
                     NavigationBarItem(
                         selected = tab == i,
                         onClick = { tab = i },
                         icon = { Icon(icono, contentDescription = nombre) },
-                        label = { Text(nombre, fontSize = 11.sp) }
+                        label = { Text(nombre, fontSize = 11.sp) },
+                        colors = NavigationBarItemDefaults.colors(
+                            selectedIconColor = Paleta.Naranja, selectedTextColor = Paleta.Naranja,
+                            indicatorColor = Paleta.Tarjeta, unselectedIconColor = Paleta.Gris, unselectedTextColor = Paleta.Gris
+                        )
                     )
                 }
             }
@@ -56,6 +62,7 @@ fun MainShell() {
                 0 -> RecipeStudioScreen(onSoporte = { modoSoporte = true }, onIrSustitutos = { tab = 1 })
                 1 -> SustitucionesScreen()
                 2 -> EstacionesScreen()
+                3 -> MuroScreen()
                 else -> SoporteScreen()
             }
         }

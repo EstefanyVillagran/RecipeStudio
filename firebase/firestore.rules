@@ -10,8 +10,13 @@ service cloud.firestore {
 
     // Perfiles de admin/agente: cada uno solo lee el suyo. Se crean a mano desde la consola.
     match /usuarios/{uid} {
-      allow read: if signedIn() && request.auth.uid == uid;
-      allow write: if false;
+      // cada quien lee su perfil; el admin puede listarlos para elegir a qué agente asignar un caso
+      allow read: if signedIn() && (request.auth.uid == uid || esAdmin());
+      // al entrar, cada quien guarda SOLO su correo y un nombre corto; el rol nunca se cambia desde la app
+      allow update: if signedIn() && request.auth.uid == uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['correo', 'nombre'])
+        && request.resource.data.correo == request.auth.token.email.lower();
+      allow create, delete: if false;
     }
 
     match /reportes/{id} {
@@ -45,9 +50,34 @@ service cloud.firestore {
     match /progreso/{uid}/recetas/{rid} {
       allow read: if signedIn() && request.auth.uid == uid;
       allow create, update: if signedIn() && request.auth.uid == uid
-        && request.resource.data.keys().hasOnly(['nombre', 'hecha', 'completados', 'actualizadoEn', 'fotoB64'])
-        && (!('fotoB64' in request.resource.data) || request.resource.data.fotoB64.size() < 250000);
+        && request.resource.data.keys().hasOnly(['nombre', 'hecha', 'completados', 'actualizadoEn', 'fotoB64', 'fotoKey', 'notas'])
+        && (!('fotoB64' in request.resource.data) || request.resource.data.fotoB64.size() < 250000)
+        && (!('notas' in request.resource.data) || request.resource.data.notas.size() <= 600);
       allow delete: if signedIn() && request.auth.uid == uid;
+    }
+
+    // Recetas creadas por cada usuario (solo el dueño las ve y las edita).
+    match /recetasPropias/{uid}/items/{rid} {
+      allow read, delete: if signedIn() && request.auth.uid == uid;
+      allow create, update: if signedIn() && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['nombre', 'categoria', 'tiempo', 'dificultad', 'porciones', 'chefTip', 'pasos', 'ingredientes', 'creadoEn'])
+        && request.resource.data.nombre is string && request.resource.data.nombre.size() >= 1 && request.resource.data.nombre.size() <= 60
+        && request.resource.data.ingredientes is list && request.resource.data.ingredientes.size() >= 1 && request.resource.data.ingredientes.size() <= 40
+        && request.resource.data.pasos is list && request.resource.data.pasos.size() <= 15;
+    }
+
+    // Muro de recetas: lo ve cualquiera con la app; cada quien publica y borra solo lo suyo. La foto completa está en S3.
+    match /muro/{id} {
+      allow read: if signedIn();
+      allow create, update: if signedIn()
+        && request.resource.data.ownerUid == request.auth.uid
+        && id.matches(request.auth.uid + '_.*')
+        && request.resource.data.keys().hasOnly(['receta', 'autor', 'key', 'thumbB64', 'creadoEn', 'ownerUid'])
+        && request.resource.data.receta is string && request.resource.data.receta.size() <= 80
+        && request.resource.data.autor is string && request.resource.data.autor.size() <= 40
+        && request.resource.data.thumbB64.size() < 150000
+        && (request.resource.data.key == '' || request.resource.data.key.matches('fotos/[0-9]{8}/[a-f0-9]{24}\\.(jpg|png|webp)'));
+      allow delete: if signedIn() && (resource.data.ownerUid == request.auth.uid || esAdmin());
     }
 
     // Todo lo demás, cerrado.

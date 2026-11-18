@@ -2,7 +2,6 @@ package com.recipestudio.kitchensync.presentation.viewmodel
 
 import com.recipestudio.kitchensync.data.session.InsumoSubstitutionManager
 import com.recipestudio.kitchensync.domain.Receta
-import com.recipestudio.kitchensync.network.S3StorageService
 import com.recipestudio.kitchensync.presentation.state.RecipeStepUiState
 import com.recipestudio.kitchensync.repository.RecetaRepository
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -10,8 +9,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 class RecipeStudioViewModel(
-    private val recetaRepository: RecetaRepository = RecetaRepository(),
-    private val s3StorageService: S3StorageService = S3StorageService()
+    private val recetaRepository: RecetaRepository = RecetaRepository()
 ) {
     private val _uiState = MutableStateFlow(RecipeStepUiState())
     val uiState: StateFlow<RecipeStepUiState> = _uiState.asStateFlow()
@@ -46,10 +44,6 @@ class RecipeStudioViewModel(
         } catch (e: Exception) {
             onResultado(false)
         }
-    }
-
-    fun subirFotoRecetaACloud(bytesFoto: ByteArray, nombreArchivo: String) {
-        s3StorageService.subirImagen(nombreArchivo, bytesFoto)
     }
 
     fun marcarIngredienteComoUtilizado(ingredienteId: String) {

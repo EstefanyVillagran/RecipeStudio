@@ -49,6 +49,15 @@ class KitchenApi(private val baseUrl: String, private val sesion: SesionQr) {
         return parseReporte(call("POST", "/reportar", body).getJSONObject("reporte"))
     }
 
+    /** Avisa a la estación (PC) del reemplazo elegido para que se vea en la pantalla grande. */
+    suspend fun enviarSustitucion(original: String, sustituto: String, saborPct: Int, texturaPct: Int, nota: String) {
+        call("POST", "/evento", conSesion(
+            JSONObject().put("type", "SUSTITUCION").put("original", original.take(60)).put("sustituto", sustituto.take(60))
+                .put("impactoSaborPct", saborPct.coerceIn(0, 100)).put("impactoTexturaPct", texturaPct.coerceIn(0, 100))
+                .put("nota", nota.take(200))
+        ))
+    }
+
     suspend fun misReportes(): List<Reporte> = parseReportes(call("GET", "/mis_reportes" + consulta()))
 
     private fun conSesion(o: JSONObject): JSONObject =

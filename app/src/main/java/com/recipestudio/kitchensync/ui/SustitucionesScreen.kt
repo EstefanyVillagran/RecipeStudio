@@ -25,12 +25,12 @@ import com.recipestudio.kitchensync.security.Validacion
 fun SustitucionesScreen() {
     var modo by remember { mutableIntStateOf(0) }
     Column(Modifier.fillMaxSize().background(Paleta.Crema)) {
-        TabRow(selectedTabIndex = modo, containerColor = Paleta.Crema) {
+        TabRow(selectedTabIndex = modo, containerColor = Paleta.Crema, contentColor = Paleta.Naranja) {
             Tab(selected = modo == 0, onClick = { modo = 0 }, text = { Text("📷 Con foto (IA)") })
             Tab(selected = modo == 1, onClick = { modo = 1 }, text = { Text("Sugerencias") })
         }
         Box(Modifier.weight(1f)) {
-            if (modo == 0) SustitucionFotoPanel() else SugerenciasPanel()
+            if (modo == 0) SustitucionFotoPanel(onVerSugerencias = { modo = 1 }) else SugerenciasPanel()
         }
     }
 }

@@ -8,6 +8,7 @@ import com.google.firebase.auth.FirebaseAuthException
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.FirebaseFirestoreException
+import com.google.firebase.firestore.SetOptions
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
@@ -26,10 +27,13 @@ data class ReporteFs(
     val dispositivo: String,
     val asignadoA: String?,
     val creadoEn: Long,
-    val notas: List<NotaFs> = emptyList()
+    val notas: List<NotaFs> = emptyList(),
+    val pendiente: Boolean = false      // true mientras la escritura espera conexión para llegar al servidor
 )
 
 /** Datos de quien entró al panel de soporte (documento usuarios/{uid}). */
+data class AgenteInfo(val correo: String, val nombre: String)
+
 data class PerfilSoporte(val uid: String, val correo: String, val rol: String) {
     val esAdmin get() = rol == "admin"
 }
@@ -72,7 +76,8 @@ private fun leerReporte(d: com.google.firebase.firestore.DocumentSnapshot): Repo
         dispositivo = d.getString("dispositivo").orEmpty(),
         asignadoA = d.getString("asignadoA"),
         creadoEn = d.getLong("creadoEn") ?: 0L,
-        notas = notas
+        notas = notas,
+        pendiente = d.metadata.hasPendingWrites()
     )
 }
 
@@ -95,9 +100,15 @@ object FirebaseReportes {
         }
     }
 
-    suspend fun crear(titulo: String, descripcion: String, categoria: String, prioridad: String, dispositivo: String): String {
+    /**
+     * Crea el reporte. Si se pasa [id], reintentar con el MISMO id nunca duplica (las reglas solo permiten un create
+     * por documento). Sin internet, Firestore guarda la escritura y la envía al reconectar.
+     */
+    suspend fun crear(
+        titulo: String, descripcion: String, categoria: String, prioridad: String, dispositivo: String,
+        id: String = "REP-" + System.currentTimeMillis()
+    ): String {
         val uid = asegurarSesion()
-        val id = "REP-" + System.currentTimeMillis()
         val datos = hashMapOf(
             "titulo" to titulo.trim(),
             "descripcion" to descripcion.trim(),
@@ -121,7 +132,7 @@ object FirebaseReportes {
     fun misReportes(uid: String): Flow<List<ReporteFs>> = callbackFlow {
         val reg = db.collection(COLECCION)
             .whereEqualTo("ownerUid", uid)
-            .addSnapshotListener { snap, err ->
+            .addSnapshotListener(com.google.firebase.firestore.MetadataChanges.INCLUDE) { snap, err ->
                 if (err != null) {
                     close(FirebaseException(mensajeFirebase(err)))
                     return@addSnapshotListener
@@ -155,7 +166,30 @@ object FirebaseSoporte {
     private suspend fun leerPerfil(uid: String, correo: String): PerfilSoporte? {
         val doc = db.collection("usuarios").document(uid).get().await()
         val rol = doc.getString("rol")
-        return if (rol == "admin" || rol == "agente") PerfilSoporte(uid, correo, rol) else null
+        if (rol != "admin" && rol != "agente") return null
+        val perfil = PerfilSoporte(uid, correo, rol)
+        registrarCorreo(perfil)
+        return perfil
+    }
+
+    /** Guarda el correo y un nombre corto en el propio perfil para que el admin pueda elegir al agente de una lista. */
+    private suspend fun registrarCorreo(perfil: PerfilSoporte) {
+        try {
+            db.collection("usuarios").document(perfil.uid)
+                .set(mapOf("correo" to perfil.correo.lowercase(), "nombre" to perfil.correo.substringBefore('@')), SetOptions.merge()).await()
+        } catch (e: Exception) {
+            // no es crítico: sin esto el agente solo aparece cuando se escribe su correo a mano
+        }
+    }
+
+    /** Agentes que ya entraron al panel (solo el admin puede listarlos según las reglas). */
+    suspend fun agentes(): List<AgenteInfo> = try {
+        db.collection("usuarios").whereEqualTo("rol", "agente").get().await().documents.mapNotNull { d ->
+            val correo = d.getString("correo") ?: return@mapNotNull null
+            AgenteInfo(correo, d.getString("nombre") ?: correo.substringBefore('@'))
+        }.sortedBy { it.nombre }
+    } catch (e: Exception) {
+        emptyList()
     }
 
     /** Perfil de la sesión que ya estaba abierta (Firebase la recuerda), o null. */
@@ -200,7 +234,7 @@ object FirebaseSoporte {
         val query = if (perfil.esAdmin) {
             db.collection("reportes")
         } else {
-            db.collection("reportes").whereEqualTo("asignadoA", perfil.correo)
+            db.collection("reportes").whereEqualTo("asignadoA", perfil.correo.lowercase())
         }
         val reg = query.addSnapshotListener { snap, err ->
             if (err != null) {
