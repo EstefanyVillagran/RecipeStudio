@@ -30,7 +30,7 @@ object SubstitutionCalculator {
 
     /** @return null si no hay una regla para ese ingrediente. @throws IllegalArgumentException si la cantidad no es positiva. */
     fun analizar(original: String, cantidad: Double): AnalisisSustitucion? {
-        require(cantidad > 0.0) { "La cantidad debe ser mayor que cero" }
+        require(cantidad.isFinite() && cantidad > 0.0) { "La cantidad debe ser mayor que cero y finita" }
         val clave = InsumoSubstitutionManager.listarOriginales().firstOrNull { it.equals(original.trim(), ignoreCase = true) }
             ?: return null
         val regla = InsumoSubstitutionManager.obtenerSustituto(clave) ?: return null
