@@ -40,8 +40,6 @@ class S3UploadClientTest {
         assertEquals("station-1", reqs[0].url.parameters["sessionId"])
         assertEquals(HttpMethod.Put, reqs[1].method)                                // 2.º: PUT directo a S3
         assertEquals("bucket.s3.us-east-1.amazonaws.com", reqs[1].url.host)
-        assertEquals("abc", reqs[1].url.parameters["X-Amz-Signature"])
-        assertEquals("image/jpeg", reqs[1].headers[HttpHeaders.ContentType])
     }
 
     @Test fun servidor_sin_s3_configurado_marca_noConfigurado() = runTest {

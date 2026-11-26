@@ -24,7 +24,7 @@ class SustitucionWhiteBoxTest {
     @Test fun p1_cantidad_negativa_lanza_excepcion() { assertFailsWith<IllegalArgumentException> { SubstitutionCalculator.analizar("Ajo", -5.0) } }
     @Test fun p1_mensaje_de_la_excepcion() {
         val e = runCatching { SubstitutionCalculator.analizar("Ajo", 0.0) }.exceptionOrNull()
-        assertEquals("La cantidad debe ser mayor que cero", e?.message)
+        assertEquals("La cantidad debe ser mayor que cero y finita", e?.message)
     }
     @Test fun p2_ingrediente_sin_regla_devuelve_null() = assertNull(SubstitutionCalculator.analizar("Trufa negra", 10.0))
     @Test fun p2_texto_vacio_devuelve_null() = assertNull(SubstitutionCalculator.analizar("", 10.0))
@@ -34,14 +34,18 @@ class SustitucionWhiteBoxTest {
         assertEquals("Azúcar morena", a!!.sustituto)
         assertEquals(95.0, a.cantidadAjustada, 0.0001)
     }
-    @Test fun p4_busqueda_ignora_mayusculas_y_espacios() = assertNotNull(SubstitutionCalculator.analizar("  AZÚCAR blanca  ", 10.0))
+    @Test fun p4_busqueda_ignora_mayusculas_y_espacios() {
+        assertNotNull(SubstitutionCalculator.analizar("  AZÚCAR blanca  ", 10.0))
+    }
 
     // ---- valores límite de la cantidad ----
     @Test fun limite_cantidad_muy_pequena_se_redondea_a_un_decimal() {
         val a = SubstitutionCalculator.analizar("Azúcar Blanca", 0.01)
         assertEquals(0.0, a!!.cantidadAjustada, 0.0001)   // 0.01 * 0.95 -> 0.0095 -> redondeo a 0.0
     }
-    @Test fun limite_cantidad_grande() = assertNotNull(SubstitutionCalculator.analizar("Azúcar Blanca", 1_000_000.0))
+    @Test fun limite_cantidad_grande() {
+        assertNotNull(SubstitutionCalculator.analizar("Azúcar Blanca", 1_000_000.0))
+    }
 
     // ---- nivelDe(): decisiones y valores límite (14/15 y 25/26) ----
     @Test fun nivel_0_es_bajo() = assertEquals(NivelImpacto.BAJO, SubstitutionCalculator.nivelDe(0, 0))

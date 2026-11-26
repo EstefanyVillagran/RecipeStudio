@@ -3,50 +3,41 @@ package com.recipestudio.kitchensync.whitebox
 import com.recipestudio.kitchensync.network.ApiException
 import com.recipestudio.kitchensync.network.KitchenApi
 import com.recipestudio.kitchensync.network.SesionQr
-import com.sun.net.httpserver.HttpServer
 import kotlinx.coroutines.runBlocking
+import okhttp3.mockwebserver.MockResponse
+import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
-import java.net.InetAddress
-import java.net.InetSocketAddress
 import java.net.ServerSocket
 
-/**
- * Práctica 11 - Fase 2. MÉTODO DE COMUNICACIÓN: KitchenApi.call() (probado a través de misReportes() y reportar()).
- * Se levanta un servidor HTTP real en localhost (JDK) que devuelve el código que se quiera: así se recorren TODAS las
- * ramas de call() sin depender de internet ni de Render.
- *
- * Caminos de call():
- *   A: codigo 2xx + cuerpo JSON                  B: 2xx + cuerpo vacío/ilegible -> JSONObject() vacío
- *   C: no 2xx con JSON {"error": ...}            D: no 2xx sin JSON -> mensajePorCodigo (401, 403, otro)
- *   E: IOException (sin conexión)                F: con cuerpo (POST) vs sin cuerpo (GET)
- */
+/** Práctica 11 - pruebas HTTP aisladas con MockWebServer. */
 class KitchenApiWhiteBoxTest {
-    private lateinit var server: HttpServer
+    private lateinit var server: MockWebServer
     private var respuestaCodigo = 200
     private var respuestaCuerpo = ""
-    private var ultimaPeticion: Triple<String, String, String>? = null   // metodo, ruta, cuerpo
+    private var ultimaPeticion: Triple<String, String, String>? = null
     private val sesion = SesionQr("station-1234", "token-secreto", "Pixel 7")
 
-    private fun api() = KitchenApi("http://127.0.0.1:${server.address.port}", sesion)
+    private fun api(): KitchenApi {
+        server.enqueue(MockResponse().setResponseCode(respuestaCodigo).setBody(respuestaCuerpo))
+        return KitchenApi(server.url("").toString().trimEnd('/'), sesion)
+    }
 
     @Before fun arrancar() {
-        server = HttpServer.create(InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0)
-        server.createContext("/") { ex ->
-            val cuerpoPeticion = ex.requestBody.readBytes().toString(Charsets.UTF_8)
-            ultimaPeticion = Triple(ex.requestMethod, ex.requestURI.toString(), cuerpoPeticion)
-            val bytes = respuestaCuerpo.toByteArray()
-            ex.sendResponseHeaders(respuestaCodigo, if (bytes.isEmpty()) -1 else bytes.size.toLong())
-            if (bytes.isNotEmpty()) ex.responseBody.use { it.write(bytes) } else ex.close()
-        }
+        server = MockWebServer()
         server.start()
     }
 
-    @After fun detener() = server.stop(0)
+    @After fun detener() = server.shutdown()
+
+    private fun capturarPeticion() {
+        val peticion = server.takeRequest()
+        ultimaPeticion = Triple(peticion.method ?: "", peticion.path ?: "", peticion.body.readUtf8())
+    }
 
     private fun codigoDeError(bloque: suspend () -> Unit): ApiException =
         runCatching { runBlocking { bloque() } }.exceptionOrNull() as ApiException
@@ -105,6 +96,7 @@ class KitchenApiWhiteBoxTest {
     // ---- F: GET sin cuerpo y POST con cuerpo; el POST no pone el token en la URL ----
     @Test fun f_get_lleva_la_sesion_en_la_consulta() {
         respuestaCuerpo = """{"reportes":[]}"""; runBlocking { api().misReportes() }
+        capturarPeticion()
         assertEquals("GET", ultimaPeticion!!.first)
         assertTrue(ultimaPeticion!!.second.startsWith("/mis_reportes?sessionId=station-1234"))
     }
@@ -112,6 +104,7 @@ class KitchenApiWhiteBoxTest {
     @Test fun f_post_envia_json_recortado_y_sin_token_en_la_url() {
         respuestaCuerpo = """{"reporte":$reporteJson}"""
         runBlocking { api().reportar("  Título  ", "  Descripción  ", "Otro", "Media") }
+        capturarPeticion()
         val (metodo, ruta, cuerpo) = ultimaPeticion!!
         assertEquals("POST", metodo)
         assertEquals("/reportar", ruta)                       // la URL no contiene el token

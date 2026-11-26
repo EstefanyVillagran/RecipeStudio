@@ -104,4 +104,5 @@ dependencies {
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")   // org.json real: el de Android es un stub en pruebas unitarias
+    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
 }
