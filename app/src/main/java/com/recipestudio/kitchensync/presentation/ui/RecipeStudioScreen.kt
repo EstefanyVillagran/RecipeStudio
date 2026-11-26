@@ -306,6 +306,34 @@ fun RecipeStudioScreen(onSoporte: () -> Unit = {}, onIrSustitutos: () -> Unit = 
             .apply()
     }
 
+    fun desvincularSesionServer() {
+        if (sessionId.isBlank() || sessionToken.isBlank()) return
+        val body = JSONObject()
+            .put("sessionId", sessionId)
+            .put("token", sessionToken)
+        scope.launch(Dispatchers.IO) {
+            for (base in buildServerCandidates()) {
+                try {
+                    val connection = URL("$base/reset").openConnection() as HttpURLConnection
+                    connection.requestMethod = "POST"
+                    connection.setRequestProperty("Content-Type", "application/json; charset=utf-8")
+                    connection.doOutput = true
+                    connection.connectTimeout = 10000
+                    connection.readTimeout = 10000
+                    val output = connection.outputStream
+                    output.write(body.toString().toByteArray(Charsets.UTF_8))
+                    output.flush()
+                    output.close()
+                    val code = connection.responseCode
+                    connection.disconnect()
+                    if (code in 200..299) return@launch
+                } catch (_: Exception) {
+                    // Probar la siguiente URL configurada
+                }
+            }
+        }
+    }
+
     fun buildServerCandidates(): List<String> {
         val candidates = linkedSetOf<String>()
         if (serverBaseUrl.isNotBlank()) {
@@ -797,6 +825,7 @@ fun RecipeStudioScreen(onSoporte: () -> Unit = {}, onIrSustitutos: () -> Unit = 
                                                 confirmarSalir = false
                                                 temporizadorCorriendo = false
                                                 recetaSecretaDesbloqueada = false
+                                                desvincularSesionServer()
                                                 estaVinculado = false
                                                 sessionId = ""
                                                 sessionToken = ""

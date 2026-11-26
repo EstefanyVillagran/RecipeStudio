@@ -360,6 +360,13 @@ class Core:
             self.reiniciar()
             return {"status": "reset"}
 
+    def desvincular_panel(self, panel_key):
+        with self.lock:
+            if not isinstance(panel_key, str) or not hmac.compare_digest(panel_key, self.sesion["panelKey"]):
+                raise ApiError(403, "La estación no está autorizada")
+            self.reiniciar()
+            return {"status": "reset"}
+
     def estado_publico(self):
         with self.lock:
             e = dict(self.estado)
@@ -669,7 +676,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     "/reportar": lambda: c.reportar(b, body),
                     "/admin/asignar": lambda: c.asignar(b, body),
                     "/admin/estado": lambda: c.cambiar_estado(b, body),
-                    "/reset": lambda: c.desvincular(body.get("sessionId"), body.get("token"), b),
+                    "/reset": lambda: c.desvincular_panel(body.get("panelKey")) if body.get("panelKey") else c.desvincular(body.get("sessionId"), body.get("token"), b),
                 }
             if ruta not in respuestas:
                 raise ApiError(404, "Endpoint no encontrado")
