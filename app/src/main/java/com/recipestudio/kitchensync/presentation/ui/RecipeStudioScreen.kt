@@ -312,7 +312,10 @@ fun RecipeStudioScreen(onSoporte: () -> Unit = {}, onIrSustitutos: () -> Unit = 
             .put("sessionId", sessionId)
             .put("token", sessionToken)
         scope.launch(Dispatchers.IO) {
-            for (base in buildServerCandidates()) {
+            val serverCandidates = linkedSetOf<String>()
+            if (serverBaseUrl.isNotBlank()) serverCandidates += serverBaseUrl.trimEnd('/')
+            serverCandidates += ServerConfig.DEFAULT
+            for (base in serverCandidates) {
                 try {
                     val connection = URL("$base/reset").openConnection() as HttpURLConnection
                     connection.requestMethod = "POST"
@@ -339,9 +342,7 @@ fun RecipeStudioScreen(onSoporte: () -> Unit = {}, onIrSustitutos: () -> Unit = 
         if (serverBaseUrl.isNotBlank()) {
             candidates += serverBaseUrl.trimEnd('/')
         }
-        listOf(
-            ServerConfig.DEFAULT
-        ).forEach { candidate -> candidates += candidate }
+        candidates += ServerConfig.DEFAULT
         return candidates.toList()
     }
 
