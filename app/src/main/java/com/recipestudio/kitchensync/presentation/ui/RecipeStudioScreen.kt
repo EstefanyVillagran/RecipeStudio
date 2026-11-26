@@ -36,6 +36,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
@@ -51,7 +52,20 @@ import androidx.fragment.app.FragmentActivity
 import com.google.mlkit.vision.barcode.BarcodeScanning
 import com.google.mlkit.vision.common.InputImage
 import com.recipestudio.kitchensync.data.local.ProgresoLocal
+import com.recipestudio.kitchensync.data.remote.FirebaseMuro
+import com.recipestudio.kitchensync.util.AlertaTemporizador
+import com.recipestudio.kitchensync.util.TrabajoSegundoPlano
+import kotlinx.coroutines.CancellationException
 import com.recipestudio.kitchensync.data.remote.FirebaseProgreso
+import com.recipestudio.kitchensync.shared.network.S3Exception
+import com.recipestudio.kitchensync.shared.network.S3UploadClient
+import com.recipestudio.kitchensync.ui.aJpeg
+import com.recipestudio.kitchensync.ui.leerReducida
+import kotlinx.coroutines.withTimeoutOrNull
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import kotlinx.coroutines.flow.catch
+import com.recipestudio.kitchensync.ui.CrearRecetaDialog
 import com.recipestudio.kitchensync.domain.SustitucionContexto
 import com.recipestudio.kitchensync.data.session.InsumoSubstitutionManager
 import com.recipestudio.kitchensync.network.ServerConfig
@@ -95,7 +109,9 @@ data class RecetaUiData(
     val totalPasos: Int,
     val instruccion: String,
     val chefTip: String,
-    val ingredientes: List<IngredientUi>
+    val ingredientes: List<IngredientUi>,
+    val pasos: List<String> = emptyList(),   // pasos para navegar (Anterior / Siguiente)
+    val propiaId: String? = null             // id en Firestore si es una receta creada por el usuario
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -129,13 +145,26 @@ fun RecipeStudioScreen(onSoporte: () -> Unit = {}, onIrSustitutos: () -> Unit = 
     }
     var recetaFinalizada by remember { mutableStateOf(false) }
     var conectando by remember { mutableStateOf(false) }
+    var menuSesion by remember { mutableStateOf(false) }
+    var confirmarSalir by remember { mutableStateOf(false) }
 
     var ultimaFotoUri by remember { mutableStateOf<Uri?>(null) }
     var recetaHecha by remember { mutableStateOf(false) }
 
     var fotoNueva by remember { mutableStateOf<Bitmap?>(null) }
-    val takePictureLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicturePreview()) { bitmap ->
-        if (bitmap != null) fotoNueva = bitmap
+    var uriFotoFinal by remember { mutableStateOf<Uri?>(null) }
+    // Foto en resolución completa: la miniatura de la cámara es muy chica para el muro y para S3
+    val takePictureLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
+        val u = uriFotoFinal
+        if (ok && u != null) fotoNueva = leerReducida(context, u, 1280)
+    }
+    fun lanzarFotoFinal() {
+        val dir = java.io.File(context.cacheDir, "fotos").apply { mkdirs() }
+        val u = androidx.core.content.FileProvider.getUriForFile(
+            context, "${context.packageName}.fileprovider", java.io.File(dir, "final_${System.currentTimeMillis()}.jpg")
+        )
+        uriFotoFinal = u
+        takePictureLauncher.launch(u)
     }
 
     val sustitucionAzucar = remember {
@@ -143,50 +172,53 @@ fun RecipeStudioScreen(onSoporte: () -> Unit = {}, onIrSustitutos: () -> Unit = 
             ?: InsumoSubstitutionManager.obtenerSustituto("Azúcar Blanca")
     }
 
-    val recetasCat = remember {
-        listOf(
-            RecetaUiData(
-                nombre = "Pasta al pomodoro",
-                categoria = "COCINA ITALIANA • RECETA FAMILIAR",
-                tiempo = "35 min",
-                dificultad = "Dificultad media",
-                porciones = "4 porciones",
-                pasoActual = 3,
-                totalPasos = 3,
-                instruccion = "Pasa la pasta a la sartén, añade un poco del agua de cocción y mezcla energéticamente. Termina con albahaca y aceite de oliva.",
-                chefTip = "Conserva una taza del agua de cocción. El almidón ayudará a que la salsa se agarre a la pasta.",
-                ingredientes = listOf(
-                    IngredientUi("1", "Spaghetti artesanal", "400 g", true),
-                    IngredientUi("2", "Tomates maduros", "6", true),
-                    IngredientUi("3", "Ajo fresco", "2 dientes", true),
-                    IngredientUi("4", "Albahaca fresca", "1 manojo", false),
-                    IngredientUi("5", "Aceite de oliva extra virgen", "45 ml", false),
-                    IngredientUi("6", "Sal de mar y pimienta", "Al gusto", false)
-                )
-            ),
-            RecetaUiData(
-                nombre = "Enchiladas Suizas",
-                categoria = "COCINA MEXICANA • TRADICIONAL",
-                tiempo = "45 min",
-                dificultad = "Dificultad alta",
-                porciones = "3 porciones",
-                pasoActual = 2,
-                totalPasos = 4,
-                instruccion = "Envuelve el pollo deshebrado en tortillas calientes, baña con la salsa verde cremosa a base de tomatillo y gratina con abundante queso manchego.",
-                chefTip = "Usa crema ácida fresca justo al salir del horno para realzar la textura cremosa.",
-                ingredientes = listOf(
-                    IngredientUi("1", "Tortillas de maíz", "12 pzas", true),
-                    IngredientUi("2", "Pollo cocido deshebrado", "500 g", true),
-                    IngredientUi("3", "Tomatillo verde", "8 pzas", false),
-                    IngredientUi("4", "Queso manchego rallado", "200 g", false)
-                )
-            )
-        )
-    }
+    val recetasBase = remember { recetasBase() }
+    var recetasPropias by remember { mutableStateOf<List<RecetaUiData>>(emptyList()) }
+    val recetasRemotas = remember { mutableStateListOf<RecetaUiData>() }   // las eligió otro celular y este no las tiene
+    val recetasCat: List<RecetaUiData> = recetasBase + recetasPropias +
+        recetasRemotas.filter { r -> (recetasBase + recetasPropias).none { it.nombre == r.nombre } }
+    // El sondeo corre en una corrutina que nace una sola vez: necesita siempre el catálogo vigente, no el de su primera composición
+    val catalogoActual by rememberUpdatedState(recetasCat)
+    var editandoReceta by remember { mutableStateOf<com.recipestudio.kitchensync.data.remote.RecetaPropia?>(null) }
+    var creandoReceta by remember { mutableStateOf(false) }
+    var recetaABorrar by remember { mutableStateOf<RecetaUiData?>(null) }
 
     var recetaSeleccionada by remember { mutableStateOf(recetasCat[0]) }
-    val listaIngredientes = remember(recetaSeleccionada) {
+    val listaIngredientes = remember {
         mutableStateListOf(*recetaSeleccionada.ingredientes.map { it.copy() }.toTypedArray())
+    }
+    var pasoIdx by remember(recetaSeleccionada.nombre) { mutableIntStateOf(0) }
+    val hayPasos = recetaSeleccionada.pasos.isNotEmpty()
+    val totalPasosUi = if (hayPasos) recetaSeleccionada.pasos.size else maxOf(recetaSeleccionada.totalPasos, 1)
+    val pasoActualUi = if (hayPasos) pasoIdx.coerceIn(0, totalPasosUi - 1) + 1 else recetaSeleccionada.pasoActual
+    val textoPasoUi = if (hayPasos) recetaSeleccionada.pasos[pasoActualUi - 1] else recetaSeleccionada.instruccion
+    var notasTexto by remember(recetaSeleccionada.nombre) { mutableStateOf("") }
+    var notasGuardadas by remember(recetaSeleccionada.nombre) { mutableStateOf("") }
+    // Cambios míos que el servidor todavía no confirmó: el sondeo no debe deshacerlos (era la causa de que
+    // un ingrediente marcado "parpadeara" o se desmarcara en el otro celular)
+    val pendientes = remember { java.util.concurrent.ConcurrentHashMap<String, Pair<Boolean, Long>>() }
+    var recetaPendiente by remember { mutableStateOf<Pair<String, Long>?>(null) }
+    var uriFotoPaso by remember { mutableStateOf<Uri?>(null) }
+    var fotoPasoVersion by remember { mutableIntStateOf(0) }
+    fun guardarFotoPaso(bmp: Bitmap?) {
+        if (bmp == null) return
+        ProgresoLocal.guardarFotoPaso(context, recetaSeleccionada.nombre, pasoActualUi, aJpeg(bmp, 900, 80))
+        fotoPasoVersion++
+    }
+    val tomarFotoPaso = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
+        val u = uriFotoPaso
+        if (ok && u != null) guardarFotoPaso(leerReducida(context, u, 900))
+    }
+    val elegirFotoPaso = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) guardarFotoPaso(leerReducida(context, uri, 900))
+    }
+    fun lanzarFotoPaso() {
+        val dir = java.io.File(context.cacheDir, "fotos").apply { mkdirs() }
+        val u = androidx.core.content.FileProvider.getUriForFile(
+            context, "${context.packageName}.fileprovider", java.io.File(dir, "paso_${System.currentTimeMillis()}.jpg")
+        )
+        uriFotoPaso = u
+        tomarFotoPaso.launch(u)
     }
 
     var tiempoRestanteSegundos by remember { mutableIntStateOf(180) }
@@ -197,6 +229,7 @@ fun RecipeStudioScreen(onSoporte: () -> Unit = {}, onIrSustitutos: () -> Unit = 
     LaunchedEffect(recetaSeleccionada.nombre) {
         val receta = recetaSeleccionada.nombre
         SustitucionContexto.ingredientes = recetaSeleccionada.ingredientes.map { it.nombre }
+        SustitucionContexto.receta = recetaSeleccionada.nombre
         ultimaFotoUri = null
         recetaHecha = false
         val local = withContext(Dispatchers.IO) { ProgresoLocal.foto(context, receta) }
@@ -213,19 +246,55 @@ fun RecipeStudioScreen(onSoporte: () -> Unit = {}, onIrSustitutos: () -> Unit = 
         }
     }
 
-    // Foto final recién tomada: se guarda en el teléfono y en la nube.
+    // Foto final recién tomada: se guarda en el teléfono, se sube a S3 con URL prefirmada y se publica en el muro.
     LaunchedEffect(fotoNueva) {
         val bmp = fotoNueva ?: return@LaunchedEffect
         val receta = recetaSeleccionada.nombre
         val ids = listaIngredientes.filter { it.completado }.map { it.id }
-        val bytes = java.io.ByteArrayOutputStream().also { bmp.compress(Bitmap.CompressFormat.JPEG, 80, it) }.toByteArray()
-        val archivo = withContext(Dispatchers.IO) { ProgresoLocal.guardarFoto(context, receta, bytes) }
+        val grande = withContext(Dispatchers.Default) { aJpeg(bmp, 1280, 85) }
+        val miniatura = withContext(Dispatchers.Default) { aJpeg(bmp, 360, 70) }
+        val archivo = withContext(Dispatchers.IO) { ProgresoLocal.guardarFoto(context, receta, grande) }
         ultimaFotoUri = Uri.fromFile(archivo)
         recetaHecha = true
         fotoNueva = null
         Toast.makeText(context, "Foto guardada y receta marcada como finalizada", Toast.LENGTH_SHORT).show()
-        val enNube = withContext(Dispatchers.IO) { FirebaseProgreso.guardar(receta, true, ids, bytes) }
-        if (!enNube) Toast.makeText(context, "Guardada en el celular; se subirá a la nube cuando haya internet", Toast.LENGTH_LONG).show()
+
+        // Subida a S3 + muro en SEGUNDO PLANO: antes se hacía aquí mismo, pero al poner fotoNueva = null este efecto se
+        // cancelaba y la foto nunca llegaba a la nube ni al muro.
+        val base = serverBaseUrl
+        val sid = sessionId
+        val tok = sessionToken
+        val vinculado = estaVinculado
+        val nombreAutor = ServerConfig.nombreDispositivo()
+        val appContext = context.applicationContext
+        TrabajoSegundoPlano.scope.launch {
+            var clave: String? = null
+            var avisoS3: String? = null
+            if (vinculado && sid.isNotBlank()) {
+                try {
+                    clave = S3UploadClient(base, sid, tok).subirFoto(grande)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: S3Exception) {
+                    if (!e.noConfigurado) avisoS3 = "No se pudo subir a S3: ${e.message}"
+                } catch (e: Exception) {
+                    avisoS3 = "S3 no disponible (${e.javaClass.simpleName})"
+                }
+            }
+            val guardado = withTimeoutOrNull(15_000L) { FirebaseProgreso.guardar(receta, true, ids, miniatura, clave) } ?: false
+            val errorMuro = withTimeoutOrNull(15_000L) {
+                FirebaseMuro.publicar(receta, nombreAutor, clave.orEmpty(), miniatura)
+            } ?: "tardó demasiado: se enviará cuando haya internet"
+            withContext(Dispatchers.Main) {
+                val mensaje = when {
+                    errorMuro == null && clave != null -> "☁️ Foto subida a S3 y publicada en el muro"
+                    errorMuro == null -> "Foto publicada en el muro" + (avisoS3?.let { " ($it)" } ?: "")
+                    else -> "No se pudo publicar en el muro: $errorMuro"
+                }
+                Toast.makeText(appContext, mensaje, Toast.LENGTH_LONG).show()
+                if (!guardado && errorMuro == null) Toast.makeText(appContext, "El avance de la receta se guardará al volver la conexión", Toast.LENGTH_SHORT).show()
+            }
+        }
     }
 
     fun persistSessionState() {
@@ -248,6 +317,29 @@ fun RecipeStudioScreen(onSoporte: () -> Unit = {}, onIrSustitutos: () -> Unit = 
         return candidates.toList()
     }
 
+    LaunchedEffect(Unit) {
+        try {
+            val uid = com.recipestudio.kitchensync.data.remote.FirebaseReportes.asegurarSesion()
+            com.recipestudio.kitchensync.data.remote.FirebaseRecetas.misRecetas(uid)
+                .catch { }
+                .collect { lista -> recetasPropias = lista.map { it.aUi() } }
+        } catch (e: Exception) {
+            // sin sesión de Firebase no hay recetas propias: el catálogo base sigue funcionando
+        }
+    }
+
+    // Notas personales de la receta: primero el celular y, si no hay, la nube
+    LaunchedEffect(recetaSeleccionada.nombre) {
+        val receta = recetaSeleccionada.nombre
+        val local = ProgresoLocal.notas(context, receta)
+        notasTexto = local; notasGuardadas = local
+        if (local.isBlank()) {
+            val nube = withTimeoutOrNull(6000L) { withContext(Dispatchers.IO) { FirebaseProgreso.cargar(receta) } }
+            val texto = nube?.notas.orEmpty()
+            if (texto.isNotBlank() && notasTexto.isBlank()) { notasTexto = texto; notasGuardadas = texto }
+        }
+    }
+
     LaunchedEffect(estaVinculado, sessionId, sessionToken, serverBaseUrl) {
         persistSessionState()
     }
@@ -262,10 +354,15 @@ fun RecipeStudioScreen(onSoporte: () -> Unit = {}, onIrSustitutos: () -> Unit = 
             val matchingServerKey = serverIngredients.keys().asSequence().firstOrNull { key ->
                 key.lowercase(Locale.getDefault()).replace("extra virgen", "").trim() == normalizedName
             }
-            val completed = if (matchingServerKey != null) {
+            val delServidor = if (matchingServerKey != null) {
                 serverIngredients.optBoolean(matchingServerKey, ingredient.completado)
             } else {
                 ingredient.completado
+            }
+            val mio = pendientes[ingredient.nombre]
+            val completed = when {
+                mio != null && System.currentTimeMillis() - mio.second < 4000L && delServidor != mio.first -> mio.first   // el servidor aún no recibe mi cambio
+                else -> { if (mio != null) pendientes.remove(ingredient.nombre); delServidor }
             }
             ingredient.copy(completado = completed)
         }
@@ -273,6 +370,8 @@ fun RecipeStudioScreen(onSoporte: () -> Unit = {}, onIrSustitutos: () -> Unit = 
 
     // Se llama siempre desde Dispatchers.IO (antes corría en el hilo principal y la red fallaba en silencio)
     fun refrescarEstadoDesdeServidor(): Boolean {
+        // Sin token no hay sesión: solo se entra escaneando el QR (antes un sondeo podía volver a vincular un celular que ya había salido)
+        if (sessionToken.isBlank()) return false
         val urls = buildServerCandidates().map { "$it/estado" }
 
         var estadoActualizado = false
@@ -289,14 +388,25 @@ fun RecipeStudioScreen(onSoporte: () -> Unit = {}, onIrSustitutos: () -> Unit = 
                     val responseText = connection.inputStream.bufferedReader().use { it.readText() }
                     val json = JSONObject(responseText)
                     val ingredientes = json.optJSONObject("ingredientes")
-                    val recetaNombre = json.optString("receta", recetaSeleccionada.nombre)
-                    val recetaMatch = recetasCat.find { it.nombre == recetaNombre }
+                    var recetaNombre = json.optString("receta", recetaSeleccionada.nombre)
+                    // Si acabo de elegir otra receta y el servidor aún no lo sabe, no me regresa a la anterior
+                    val miEleccion = recetaPendiente
+                    if (miEleccion != null) {
+                        if (System.currentTimeMillis() - miEleccion.second < 4000L && recetaNombre != miEleccion.first) recetaNombre = miEleccion.first
+                        else recetaPendiente = null
+                    }
+                    // La estación manda la receta completa: si otro celular eligió una que este no tiene, se agrega al catálogo
+                    json.optJSONObject("recetaDetalle")?.let { det ->
+                        val n = det.optString("nombre")
+                        if (n.isNotBlank() && catalogoActual.none { it.nombre == n } && recetasRemotas.none { it.nombre == n }) recetasRemotas.add(recetaDesdeDetalle(det))
+                    }
+                    val recetaMatch = (catalogoActual + recetasRemotas).find { it.nombre == recetaNombre }
                     val targetRecipe = recetaMatch ?: recetaSeleccionada
-                    if (recetaMatch != null) {
+                    if (recetaMatch != null && recetaMatch.nombre != recetaSeleccionada.nombre) {
                         recetaSeleccionada = recetaMatch
                     }
 
-                    if (ingredientes != null) {
+                    if (ingredientes != null && json.optString("receta") == targetRecipe.nombre) {
                         val merged = mergeServerIngredientState(targetRecipe, ingredientes)
                         listaIngredientes.clear()
                         listaIngredientes.addAll(merged)
@@ -309,9 +419,10 @@ fun RecipeStudioScreen(onSoporte: () -> Unit = {}, onIrSustitutos: () -> Unit = 
                     val nuevoTimer = json.optInt("timerSeconds", tiempoRestanteSegundos)
                     tiempoRestanteSegundos = nuevoTimer
                     temporizadorCorriendo = json.optBoolean("timerRunning", temporizadorCorriendo)
-                    sessionId = json.optString("sessionId", sessionId)
-                    sessionToken = json.optString("token", sessionToken)
-                    estaVinculado = json.optBoolean("conectado", estaVinculado)
+                    // La sesión NO se copia de la estación: este celular sigue vinculado solo si la estación sigue conectada
+                    // con la MISMA sesión que se escaneó (si se reinició o se unió otro celular, vuelve al QR).
+                    val mismaSesion = json.optString("sessionId", sessionId) == sessionId
+                    estaVinculado = json.optBoolean("conectado", estaVinculado) && mismaSesion
                     val connectedBaseUrl = json.optString("serverBaseUrl", serverBaseUrl)
                     if (connectedBaseUrl.isNotBlank()) {
                         serverBaseUrl = ServerConfig.normalizar(connectedBaseUrl)
@@ -369,6 +480,18 @@ fun RecipeStudioScreen(onSoporte: () -> Unit = {}, onIrSustitutos: () -> Unit = 
         }
     }
 
+    /** Elegir receta: se manda COMPLETA a la estación para que la PC y los demás celulares vean los mismos ingredientes. */
+    fun anunciarReceta(receta: RecetaUiData) {
+        recetaPendiente = receta.nombre to System.currentTimeMillis()
+        syncWithWeb("CHANGE_RECIPE", receta.nombre)
+        enviarEventoServer(
+            mapOf(
+                "type" to "CHANGE_RECIPE", "sessionId" to sessionId, "token" to sessionToken,
+                "recipeName" to receta.nombre, "recipe" to receta.aJson(listaIngredientes.toList())
+            )
+        )
+    }
+
     LaunchedEffect(Unit) {
         if (!tienePermisoCamara) {
             launcherPermisos.launch(Manifest.permission.CAMERA)
@@ -418,8 +541,16 @@ fun RecipeStudioScreen(onSoporte: () -> Unit = {}, onIrSustitutos: () -> Unit = 
 
         if (tiempoRestanteSegundos <= 0 && temporizadorCorriendo) {
             temporizadorCorriendo = false
+            AlertaTemporizador.sonar(context)
             Toast.makeText(context, "⏰ La receta ya terminó. ¡Tiempo finalizado!", Toast.LENGTH_LONG).show()
         }
+    }
+
+    // Modo cocina: la pantalla no se apaga mientras el celular está vinculado a una estación
+    DisposableEffect(estaVinculado) {
+        val ventana = (context as? android.app.Activity)?.window
+        if (estaVinculado) ventana?.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        onDispose { ventana?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) }
     }
 
     val min = tiempoRestanteSegundos / 60
@@ -512,9 +643,12 @@ fun RecipeStudioScreen(onSoporte: () -> Unit = {}, onIrSustitutos: () -> Unit = 
                                         val normalizedBase = if (baseUrl.endsWith("/")) baseUrl.dropLast(1) else baseUrl
                                         "$normalizedBase/conectar?sessionId=$qrSessionId&token=$token"
                                     }
-                                    serverBaseUrl = ServerConfig.normalizar(connectUrl.substringBefore("/conectar"))
+                                    // El QR puede traer la IP interna del contenedor (p. ej. 10.x.x.x:10000) si el servidor
+                                    // no conoce su URL pública: se conecta SIEMPRE a la dirección normalizada (la de Render).
+                                    val baseSegura = ServerConfig.normalizar(connectUrl.substringBefore("/conectar"))
+                                    serverBaseUrl = baseSegura
 
-                                    val url = URL(connectUrl)
+                                    val url = URL(baseSegura + "/conectar" + connectUrl.substringAfter("/conectar", ""))
                                     val connection = url.openConnection() as HttpURLConnection
                                     connection.requestMethod = "GET"
                                     connection.connectTimeout = 30000   // el servidor gratis puede tardar ~1 min en despertar
@@ -565,28 +699,41 @@ fun RecipeStudioScreen(onSoporte: () -> Unit = {}, onIrSustitutos: () -> Unit = 
                 ModalDrawerSheet(modifier = Modifier.width(280.dp)) {
                     Spacer(modifier = Modifier.height(24.dp))
                     Text(text = "🍳 Catálogo de Recetas", fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 16.dp))
-                    HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                    OutlinedButton(
+                        onClick = { scope.launch { drawerState.close() }; creandoReceta = true },
+                        modifier = Modifier.padding(horizontal = 16.dp).fillMaxWidth(), shape = RoundedCornerShape(12.dp)
+                    ) { Text("➕ Crear mi receta", color = PrimaryOrange, fontWeight = FontWeight.Bold) }
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                    Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                     recetasCat.forEach { receta ->
                         NavigationDrawerItem(
                             label = { Text(receta.nombre, fontWeight = FontWeight.SemiBold) },
+                            badge = if (receta.propiaId != null) ({
+                                Row {
+                                    Text("✏️", modifier = Modifier.clickable {
+                                        scope.launch { drawerState.close() }
+                                        editandoReceta = com.recipestudio.kitchensync.data.remote.RecetaPropia(
+                                            id = receta.propiaId, nombre = receta.nombre, categoria = receta.categoria.let { if (it == "MI RECETA") "" else it },
+                                            tiempo = receta.tiempo.let { if (it == "—") "" else it }, dificultad = receta.dificultad,
+                                            porciones = receta.porciones.let { if (it == "—") "" else it }, chefTip = receta.chefTip.let { if (it == "Receta propia") "" else it },
+                                            pasos = receta.pasos, ingredientes = receta.ingredientes.map { it.nombre to it.cantidad }
+                                        )
+                                    }.padding(horizontal = 6.dp))
+                                    Text("🗑", modifier = Modifier.clickable { recetaABorrar = receta }.padding(horizontal = 6.dp))
+                                }
+                            }) else null,
                             selected = recetaSeleccionada.nombre == receta.nombre,
                             onClick = {
                                 recetaSeleccionada = receta
                                 listaIngredientes.clear()
                                 listaIngredientes.addAll(receta.ingredientes.map { it.copy() })
-                                syncWithWeb("CHANGE_RECIPE", receta.nombre)
-                                enviarEventoServer(
-                                    mapOf(
-                                        "type" to "CHANGE_RECIPE",
-                                        "sessionId" to sessionId,
-                                        "token" to sessionToken,
-                                        "recipeName" to receta.nombre
-                                    )
-                                )
+                                anunciarReceta(receta)
                                 scope.launch { drawerState.close() }
                             },
                             modifier = Modifier.padding(horizontal = 8.dp)
                         )
+                    }
                     }
                 }
             }
@@ -617,13 +764,50 @@ fun RecipeStudioScreen(onSoporte: () -> Unit = {}, onIrSustitutos: () -> Unit = 
                                 Spacer(modifier = Modifier.width(10.dp))
                                 Text(text = "RecipeStudio", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = TextDark)
                             }
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .background(SuccessGreen)
-                                    .padding(horizontal = 10.dp, vertical = 6.dp)
-                            ) {
-                                Text(text = "🟢 Sincronizado", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                            // Estado de la sesión + salida: el usuario puede dejar la estación sin perder sus reportes ni recetas hechas
+                            Box {
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .background(SuccessGreen)
+                                        .clickable { menuSesion = true }
+                                        .padding(horizontal = 12.dp, vertical = 8.dp)
+                                ) {
+                                    Text(text = "🟢 Conectado  ▾", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                }
+                                DropdownMenu(expanded = menuSesion, onDismissRequest = { menuSesion = false }) {
+                                    DropdownMenuItem(
+                                        text = { Text("Sincronizado con la estación", fontSize = 12.sp) },
+                                        onClick = {}, enabled = false
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("🚪 Salir de la sesión", fontWeight = FontWeight.SemiBold) },
+                                        onClick = { menuSesion = false; confirmarSalir = true }
+                                    )
+                                }
+                            }
+                            if (confirmarSalir) {
+                                AlertDialog(
+                                    onDismissRequest = { confirmarSalir = false },
+                                    title = { Text("¿Salir de la sesión?") },
+                                    text = { Text("Dejarás de controlar la estación desde este celular. Tus reportes y tus recetas terminadas con su foto se conservan. Para volver, escanea el QR otra vez.") },
+                                    confirmButton = {
+                                        Button(
+                                            onClick = {
+                                                confirmarSalir = false
+                                                temporizadorCorriendo = false
+                                                recetaSecretaDesbloqueada = false
+                                                estaVinculado = false
+                                                sessionId = ""
+                                                sessionToken = ""
+                                                persistSessionState()
+                                                Toast.makeText(context, "Saliste de la sesión. Tus reportes y recetas siguen guardados.", Toast.LENGTH_LONG).show()
+                                            },
+                                            colors = ButtonDefaults.buttonColors(containerColor = PrimaryOrange)
+                                        ) { Text("Salir") }
+                                    },
+                                    dismissButton = { TextButton(onClick = { confirmarSalir = false }) { Text("Cancelar") } }
+                                )
                             }
                         }
                     }
@@ -636,10 +820,10 @@ fun RecipeStudioScreen(onSoporte: () -> Unit = {}, onIrSustitutos: () -> Unit = 
                             Spacer(modifier = Modifier.height(6.dp))
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                 Text(text = "Progreso de la receta", fontSize = 11.sp, color = Color.Gray)
-                                Text(text = "${recetaSeleccionada.pasoActual} de ${recetaSeleccionada.totalPasos} pasos", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                Text(text = "$pasoActualUi de $totalPasosUi pasos", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                             }
                             LinearProgressIndicator(
-                                progress = { recetaSeleccionada.pasoActual.toFloat() / recetaSeleccionada.totalPasos },
+                                progress = { pasoActualUi.toFloat() / totalPasosUi },
                                 modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)),
                                 color = PrimaryOrange,
                                 trackColor = Color.LightGray.copy(alpha = 0.4f)
@@ -648,19 +832,30 @@ fun RecipeStudioScreen(onSoporte: () -> Unit = {}, onIrSustitutos: () -> Unit = 
                     }
 
                     item {
-                        Card(
-                            modifier = Modifier.fillMaxWidth().height(220.dp),
-                            shape = RoundedCornerShape(20.dp),
-                            colors = CardDefaults.cardColors(containerColor = DarkCard)
-                        ) {
-                            Box(modifier = Modifier.fillMaxSize()) {
-                                Box(
-                                    modifier = Modifier.padding(16.dp).size(44.dp).clip(RoundedCornerShape(12.dp)).background(Color.Black.copy(alpha = 0.6f)),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                        Text(text = "PASO", fontSize = 8.sp, color = Color.White)
-                                        Text(text = String.format(Locale.getDefault(), "%02d", recetaSeleccionada.pasoActual), fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                        // Tarjeta del paso: foto propia si la hay; si no, una ilustración según lo que pide el paso
+                        val fotoPaso = remember(recetaSeleccionada.nombre, pasoActualUi, fotoPasoVersion) {
+                            ProgresoLocal.fotoPaso(context, recetaSeleccionada.nombre, pasoActualUi)?.let { BitmapFactory.decodeFile(it.path) }
+                        }
+                        val paletas = listOf(
+                            listOf(Color(0xFFCF5A3A), Color(0xFFE4A14E)), listOf(Color(0xFF5C8F66), Color(0xFFA8C97F)),
+                            listOf(Color(0xFF2A2B2E), Color(0xFF7A6455)), listOf(Color(0xFFB8453A), Color(0xFFE88D67))
+                        )
+                        Card(modifier = Modifier.fillMaxWidth().height(210.dp), shape = RoundedCornerShape(20.dp)) {
+                            Box(Modifier.fillMaxSize().background(Brush.linearGradient(paletas[(pasoActualUi - 1).mod(paletas.size)]))) {
+                                if (fotoPaso != null) {
+                                    Image(bitmap = fotoPaso.asImageBitmap(), contentDescription = "Foto del paso", modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                                } else {
+                                    Text(iconoPaso(textoPasoUi), fontSize = 78.sp, modifier = Modifier.align(Alignment.Center))
+                                }
+                                Box(modifier = Modifier.padding(14.dp).clip(RoundedCornerShape(12.dp)).background(Color.Black.copy(alpha = 0.55f)).padding(horizontal = 12.dp, vertical = 6.dp)) {
+                                    Text("PASO ${String.format(Locale.getDefault(), "%02d", pasoActualUi)} / $totalPasosUi", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                }
+                                Row(modifier = Modifier.align(Alignment.BottomEnd).padding(10.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    BotonSobreFoto("📷 Foto") { lanzarFotoPaso() }
+                                    BotonSobreFoto("🖼") { elegirFotoPaso.launch("image/*") }
+                                    if (fotoPaso != null) BotonSobreFoto("✖") {
+                                        ProgresoLocal.borrarFotoPaso(context, recetaSeleccionada.nombre, pasoActualUi)
+                                        fotoPasoVersion++
                                     }
                                 }
                             }
@@ -670,7 +865,37 @@ fun RecipeStudioScreen(onSoporte: () -> Unit = {}, onIrSustitutos: () -> Unit = 
                     item {
                         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             Text(text = "PASO ACTUAL", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = PrimaryOrange)
-                            Text(text = recetaSeleccionada.instruccion, fontSize = 14.sp, color = TextDark, lineHeight = 20.sp)
+                            Text(text = textoPasoUi, fontSize = 16.sp, color = TextDark, lineHeight = 24.sp)
+                            if (hayPasos && totalPasosUi > 1) {
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    OutlinedButton(onClick = { pasoIdx = (pasoIdx - 1).coerceAtLeast(0) }, enabled = pasoActualUi > 1, shape = RoundedCornerShape(12.dp), modifier = Modifier.weight(1f)) { Text("← Anterior") }
+                                    Button(onClick = { pasoIdx = (pasoIdx + 1).coerceAtMost(totalPasosUi - 1) }, enabled = pasoActualUi < totalPasosUi, shape = RoundedCornerShape(12.dp), colors = ButtonDefaults.buttonColors(containerColor = PrimaryOrange), modifier = Modifier.weight(1f)) { Text("Siguiente →") }
+                                }
+                            }
+
+                            // Notas personales: para acordarse de lo que se cambió la próxima vez que se cocine
+                            Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), colors = CardDefaults.cardColors(containerColor = Color.White)) {
+                                Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Text("📝 MIS NOTAS DE ESTA RECETA", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = PrimaryOrange)
+                                    OutlinedTextField(
+                                        value = notasTexto, onValueChange = { notasTexto = it.take(600) }, minLines = 2,
+                                        placeholder = { Text("Ej. Le puse 1 g más de sal y quedó perfecto", fontSize = 13.sp) },
+                                        supportingText = { Text("${notasTexto.length}/600", fontSize = 10.sp) }, modifier = Modifier.fillMaxWidth()
+                                    )
+                                    Button(
+                                        enabled = notasTexto != notasGuardadas,
+                                        onClick = {
+                                            val receta = recetaSeleccionada.nombre
+                                            val texto = notasTexto.trim()
+                                            ProgresoLocal.guardarNotas(context, receta, texto)
+                                            notasTexto = texto; notasGuardadas = texto
+                                            Toast.makeText(context, "Notas guardadas ✔", Toast.LENGTH_SHORT).show()
+                                            scope.launch(Dispatchers.IO) { FirebaseProgreso.guardarNotas(receta, texto) }
+                                        },
+                                        shape = RoundedCornerShape(12.dp), colors = ButtonDefaults.buttonColors(containerColor = SuccessGreen)
+                                    ) { Text(if (notasTexto == notasGuardadas && notasTexto.isNotBlank()) "Guardadas ✔" else "Guardar notas") }
+                                }
+                            }
 
                             Card(
                                 modifier = Modifier.fillMaxWidth(),
@@ -770,6 +995,7 @@ fun RecipeStudioScreen(onSoporte: () -> Unit = {}, onIrSustitutos: () -> Unit = 
                                     Row(
                                         modifier = Modifier.fillMaxWidth().clickable {
                                             val nuevoEstado = !ing.completado
+                                            pendientes[ing.nombre] = nuevoEstado to System.currentTimeMillis()
                                             listaIngredientes[index] = ing.copy(completado = nuevoEstado)
                                             recetaFinalizada = listaIngredientes.all { it.completado }
 
@@ -894,7 +1120,7 @@ fun RecipeStudioScreen(onSoporte: () -> Unit = {}, onIrSustitutos: () -> Unit = 
                                     Button(
                                         onClick = {
                                             if (ultimaFotoUri == null) {
-                                                takePictureLauncher.launch(null)
+                                                lanzarFotoFinal()
                                             } else {
                                                 val indiceActual = recetasCat.indexOfFirst { it.nombre == recetaSeleccionada.nombre }
                                                 val siguiente = recetasCat.getOrNull(indiceActual + 1) ?: recetasCat.first()
@@ -906,15 +1132,7 @@ fun RecipeStudioScreen(onSoporte: () -> Unit = {}, onIrSustitutos: () -> Unit = 
                                                 ultimaFotoUri = null
                                                 tiempoRestanteSegundos = 180
                                                 temporizadorCorriendo = false
-                                                syncWithWeb("CHANGE_RECIPE", siguiente.nombre)
-                                                enviarEventoServer(
-                                                    mapOf(
-                                                        "type" to "CHANGE_RECIPE",
-                                                        "sessionId" to sessionId,
-                                                        "token" to sessionToken,
-                                                        "recipeName" to siguiente.nombre
-                                                    )
-                                                )
+                                                anunciarReceta(siguiente)
                                                 Toast.makeText(context, "Siguiente receta desbloqueada", Toast.LENGTH_SHORT).show()
                                             }
                                         },
@@ -926,7 +1144,9 @@ fun RecipeStudioScreen(onSoporte: () -> Unit = {}, onIrSustitutos: () -> Unit = 
                                     }
 
                                     if (ultimaFotoUri != null) {
-                                        Text("Foto guardada: ${ultimaFotoUri!!.lastPathSegment}", fontSize = 11.sp, color = Color.Gray)
+                                        OutlinedButton(onClick = { lanzarFotoFinal() }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp)) {
+                                            Text("📷 Cambiar foto del platillo")
+                                        }
                                     }
                                 }
                             }
@@ -936,6 +1156,45 @@ fun RecipeStudioScreen(onSoporte: () -> Unit = {}, onIrSustitutos: () -> Unit = 
             }
         }
     }
+
+    // ----- Recetas propias: crear / editar / borrar -----
+    if (creandoReceta || editandoReceta != null) {
+        CrearRecetaDialog(
+            inicial = editandoReceta,
+            onCerrar = { creandoReceta = false; editandoReceta = null },
+            onGuardar = { r ->
+                // sin internet Firestore deja la escritura en cola: tras unos segundos se da por guardada
+                withTimeoutOrNull(6000L) { com.recipestudio.kitchensync.data.remote.FirebaseRecetas.guardar(r) } ?: true
+            }
+        )
+    }
+    recetaABorrar?.let { r ->
+        AlertDialog(
+            onDismissRequest = { recetaABorrar = null },
+            title = { Text("Eliminar receta") },
+            text = { Text("¿Eliminar \"${r.nombre}\"? Tus notas de esa receta se conservan en el celular.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    recetaABorrar = null
+                    val id = r.propiaId
+                    if (id != null) scope.launch(Dispatchers.IO) { com.recipestudio.kitchensync.data.remote.FirebaseRecetas.eliminar(id) }
+                    if (recetaSeleccionada.nombre == r.nombre) {
+                        val primera = recetasBase.first()
+                        recetaSeleccionada = primera
+                        listaIngredientes.clear(); listaIngredientes.addAll(primera.ingredientes.map { it.copy() })
+                    }
+                }) { Text("Eliminar", color = Color(0xFFB3391B)) }
+            },
+            dismissButton = { TextButton(onClick = { recetaABorrar = null }) { Text("Cancelar") } }
+        )
+    }
+}
+
+@Composable
+private fun BotonSobreFoto(texto: String, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier.clip(RoundedCornerShape(12.dp)).background(Color.Black.copy(alpha = 0.55f)).clickable(onClick = onClick).padding(horizontal = 12.dp, vertical = 8.dp)
+    ) { Text(texto, fontSize = 12.sp, color = Color.White, fontWeight = FontWeight.SemiBold) }
 }
 
 @Suppress("UnsafeOptInUsageError")

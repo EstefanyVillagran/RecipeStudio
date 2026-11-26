@@ -23,6 +23,8 @@ import secrets
 import socket
 import threading
 import time
+
+import s3_presign
 import urllib.parse
 from datetime import datetime
 
@@ -110,6 +112,44 @@ def _texto(valor, nombre, minimo, maximo):
     return valor
 
 
+def _opcional(valor, nombre, maximo):
+    if valor is None or valor == "":
+        return ""
+    if not isinstance(valor, str):
+        raise ApiError(400, f"{nombre} inválido")
+    valor = valor.strip()
+    if len(valor) > maximo:
+        raise ApiError(400, f"{nombre} no puede pasar de {maximo} caracteres")
+    return valor
+
+
+def _validar_receta(d):
+    """Receta enviada por un celular (propia o del catálogo): se valida todo antes de guardarla en el estado."""
+    nombre = _texto(d.get("nombre"), "Nombre de la receta", 1, 60)
+    ings = d.get("ingredientes")
+    if not isinstance(ings, list) or not 1 <= len(ings) <= 40:
+        raise ApiError(400, "La receta debe tener entre 1 y 40 ingredientes")
+    lista, vistos = [], set()
+    for i in ings:
+        if not isinstance(i, dict):
+            raise ApiError(400, "Ingrediente inválido")
+        n = _texto(i.get("nombre"), "Ingrediente", 1, 80)
+        if n.lower() in vistos:
+            continue                      # nombres repetidos: el estado se guarda por nombre
+        vistos.add(n.lower())
+        lista.append({"nombre": n, "medida": _opcional(i.get("medida"), "Cantidad", 30), "listo": bool(i.get("listo", False))})
+    pasos = d.get("pasos") or []
+    if not isinstance(pasos, list) or len(pasos) > 15:
+        raise ApiError(400, "Máximo 15 pasos")
+    return {
+        "nombre": nombre, "categoria": _opcional(d.get("categoria"), "Categoría", 60),
+        "tiempo": _opcional(d.get("tiempo"), "Tiempo", 20), "dificultad": _opcional(d.get("dificultad"), "Dificultad", 30),
+        "porciones": _opcional(d.get("porciones"), "Porciones", 20), "chefTip": _opcional(d.get("chefTip"), "Consejo", 300),
+        "instruccion": _opcional(d.get("instruccion"), "Instrucciones", 800),
+        "pasos": [_texto(x, "Paso", 1, 300) for x in pasos], "ingredientes": lista,
+    }
+
+
 def _entero(valor, nombre, minimo, maximo):
     try:
         n = int(valor)
@@ -153,8 +193,10 @@ class Core:
     def _crear_usuarios():
         # Solo el personal entra por la web. Los celulares NO tienen cuenta: entran únicamente con el QR.
         demo = [
-            ("admin", "Chef Administrador", "admin", os.environ.get("KITCHENSYNC_ADMIN_PASSWORD", "Admin2026!")),
-            ("agente", "Agente de Soporte", "agente", os.environ.get("KITCHENSYNC_AGENTE_PASSWORD", "Agente2026!")),
+            # Sin variable de entorno la contraseña es aleatoria: no existen credenciales conocidas en el código
+            # (antes eran Admin2026! / Agente2026! y funcionaban en el servidor público).
+            ("admin", "Chef Administrador", "admin", os.environ.get("KITCHENSYNC_ADMIN_PASSWORD") or secrets.token_urlsafe(18)),
+            ("agente", "Agente de Soporte", "agente", os.environ.get("KITCHENSYNC_AGENTE_PASSWORD") or secrets.token_urlsafe(18)),
         ]
         usuarios = {}
         for usuario, nombre, rol, password in demo:
@@ -222,6 +264,7 @@ class Core:
                 "conectado": False, "sessionId": None,
                 "receta": RECETA_POR_DEFECTO, "timer": "03:00", "timerSeconds": 180, "timerRunning": False,
                 "ingredientes": dict(RECETAS[RECETA_POR_DEFECTO]), "sustituciones": [],
+                "recetaDetalle": None, "rev": 0,
             }
             self.sesion = None
             self._nueva_sesion()
@@ -252,6 +295,37 @@ class Core:
             if not self.estado["conectado"]:
                 resp["panelKey"] = s["panelKey"]   # solo antes de vincular: la guarda la página de la estación
             return resp
+
+    # ---------- Multimedia: URLs prefirmadas de S3 ----------
+    def _sesion_en_consulta(self, q):
+        sid, tok = q.get("sessionId"), q.get("token")
+        if not sid or not tok:
+            raise ApiError(401, "Vincula tu celular con el QR")
+        with self.lock:
+            if not (self.estado["conectado"] and self._token_ok(sid, tok)):
+                raise ApiError(403, "Sesión inválida")
+
+    def url_subida(self, q):
+        """GET /api/upload-url: URL PUT firmada (caduca en 5 min). La foto viaja directo del celular a S3."""
+        self._sesion_en_consulta(q)
+        tipo = q.get("contentType", "image/jpeg")
+        if tipo not in s3_presign.TIPOS_PERMITIDOS:
+            raise ApiError(400, "Solo se permiten imágenes JPG, PNG o WEBP")
+        cfg = s3_presign.S3Config.desde_entorno()
+        if cfg is None:
+            raise ApiError(503, "El almacenamiento S3 no está configurado en el servidor")
+        return s3_presign.url_subida(cfg, tipo)
+
+    def url_descarga(self, q):
+        """GET /api/download-url?key=...: URL GET firmada (caduca en 1 h) para mostrar una foto privada."""
+        self._sesion_en_consulta(q)
+        clave = q.get("key", "")
+        if not s3_presign.PATRON_CLAVE.match(clave):
+            raise ApiError(400, "Clave de archivo inválida")
+        cfg = s3_presign.S3Config.desde_entorno()
+        if cfg is None:
+            raise ApiError(503, "El almacenamiento S3 no está configurado en el servidor")
+        return s3_presign.url_descarga(cfg, clave)
 
     def _token_ok(self, session_id, token):
         s = self.sesion
@@ -314,10 +388,18 @@ class Core:
                 self._set_timer(180)
                 e["timerRunning"] = False
             elif tipo == "CHANGE_RECIPE":
-                nombre = _texto(p.get("recipeName") or p.get("recipe"), "Receta", 1, 60)
-                if nombre not in RECETAS:
-                    raise ApiError(404, "Receta no encontrada")
-                e["receta"], e["ingredientes"] = nombre, dict(RECETAS[nombre])
+                detalle = p.get("recipe") if isinstance(p.get("recipe"), dict) else None
+                if detalle is not None:
+                    # el celular manda la receta completa: así la PC y los demás celulares ven EXACTAMENTE los mismos
+                    # ingredientes (sin catálogos duplicados que se desincronizan) y se admiten recetas propias
+                    det = _validar_receta(detalle)
+                    e["receta"], e["recetaDetalle"] = det["nombre"], det
+                    e["ingredientes"] = {i["nombre"]: i["listo"] for i in det["ingredientes"]}
+                else:
+                    nombre = _texto(p.get("recipeName") or p.get("recipe"), "Receta", 1, 60)
+                    if nombre not in RECETAS:
+                        raise ApiError(404, "Receta no encontrada")
+                    e["receta"], e["ingredientes"], e["recetaDetalle"] = nombre, dict(RECETAS[nombre]), None
             elif tipo == "SUSTITUCION":
                 original = _texto(p.get("original"), "Original", 1, 60)
                 sustituto = _texto(p.get("sustituto"), "Sustituto", 1, 60)
@@ -330,6 +412,7 @@ class Core:
                 del e["sustituciones"][:-20]
             else:
                 raise ApiError(400, "Tipo de evento desconocido")
+            e["rev"] = e.get("rev", 0) + 1       # versión del estado: los celulares ignoran lecturas más viejas que su último cambio
             return {"status": "ok", "event": tipo, "estado": self.estado_publico()}
 
     def _set_timer(self, seg):
@@ -485,8 +568,20 @@ def servir_descubrimiento():
             continue
 
 
+# Archivos de la PWA: solo estos (lista cerrada): ninguna otra ruta del disco se puede pedir
+ESTATICOS = {
+    "/manifest.webmanifest": ("static/manifest.webmanifest", "application/manifest+json; charset=utf-8", "public, max-age=3600"),
+    "/sw.js": ("static/sw.js", "text/javascript; charset=utf-8", "no-cache"),
+    "/offline.html": ("static/offline.html", "text/html; charset=utf-8", "no-cache"),
+    "/icons/icon-192.png": ("static/icons/icon-192.png", "image/png", "public, max-age=86400"),
+    "/icons/icon-512.png": ("static/icons/icon-512.png", "image/png", "public, max-age=86400"),
+    "/icons/maskable-512.png": ("static/icons/maskable-512.png", "image/png", "public, max-age=86400"),
+}
+
+
 class Handler(http.server.BaseHTTPRequestHandler):
     server_version = "KitchenSync"
+    timeout = 15   # un cliente lento o mal portado no puede retener un hilo para siempre
 
     def _json(self, status, payload):
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -508,7 +603,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
         return cab[7:] if cab.startswith("Bearer ") else None
 
     def _body(self):
-        n = int(self.headers.get("Content-Length") or 0)
+        try:
+            n = int(self.headers.get("Content-Length") or 0)
+        except ValueError:                      # antes: 500 con "abc"
+            raise ApiError(400, "Content-Length inválido")
+        if n < 0:                               # antes: read(-1) dejaba el hilo colgado
+            raise ApiError(400, "Content-Length inválido")
         if n > MAX_BODY:
             raise ApiError(413, "Petición demasiado grande")
         try:
@@ -529,6 +629,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         self._dispatch("GET")
 
+    def _metodo_no_permitido(self):
+        # Antes PUT/DELETE/PATCH cerraban la conexión sin respuesta (TypeError en log_message)
+        self._json(405, {"error": "Método no permitido"})
+
+    do_PUT = do_DELETE = do_PATCH = _metodo_no_permitido
+
     def do_POST(self):
         self._dispatch("POST")
 
@@ -540,12 +646,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if metodo == "GET":
                 if ruta in ("/", "/index.html"):
                     return self._index()
+                if ruta in ESTATICOS:
+                    return self._estatico(ruta)
                 respuestas = {
                     "/estado": lambda: c.estado_publico(),
                     "/sesion": lambda: c.crear_sesion_qr(self.client_address[0] in ("127.0.0.1", "::1"), q),
                     "/conectar": lambda: c.conectar(q.get("sessionId"), q.get("token")),
                     "/chat": lambda: c.leer_chat(b, q),
                     "/mis_reportes": lambda: c.mis_reportes(b, q),
+                    "/api/upload-url": lambda: c.url_subida(q),
+                    "/api/download-url": lambda: c.url_descarga(q),
                     "/admin/reportes": lambda: c.listar_reportes(b),
                 }
             else:
@@ -569,6 +679,21 @@ class Handler(http.server.BaseHTTPRequestHandler):
         except Exception:  # nunca se filtran detalles técnicos al cliente
             self._json(500, {"error": "Error interno del servidor"})
 
+    def _estatico(self, ruta):
+        relativa, tipo, cache = ESTATICOS[ruta]
+        try:
+            with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), relativa), "rb") as f:
+                data = f.read()
+        except OSError:
+            raise ApiError(404, "Recurso no encontrado")
+        self.send_response(200)
+        self.send_header("Content-Type", tipo)
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", cache)
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.end_headers()
+        self.wfile.write(data)
+
     def _index(self):
         ruta = os.path.join(os.path.dirname(os.path.abspath(__file__)), "index.html")
         with open(ruta, "r", encoding="utf-8") as f:
@@ -585,11 +710,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if args and ("/estado" in str(args[0]) or "/chat" in str(args[0])):
             return
         # no se registran query strings: contienen el token del QR
-        super().log_message(fmt, *[str(a).split("?")[0] for a in args])
+        # solo se limpian los textos: send_error() pasa códigos numéricos que el formato %d exige como int
+        super().log_message(fmt, *[a.split("?")[0] if isinstance(a, str) else a for a in args])
 
 
 def main():
     http.server.ThreadingHTTPServer.allow_reuse_address = True
+    # Cola de conexiones pendientes: con el valor por defecto (5) y 10 usuarios simultáneos algunos SYN se descartan
+    # y el cliente reintenta 1 s después (P95 de ~1000 ms medido en la auditoría, defecto D-04).
+    http.server.ThreadingHTTPServer.request_queue_size = 128
     try:
         httpd = http.server.ThreadingHTTPServer(("", PORT), Handler)
     except OSError:

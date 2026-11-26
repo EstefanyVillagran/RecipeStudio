@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Olla con tapa y vapor (cocina). Todo queda dentro de la zona segura de 66 dp de los íconos adaptativos. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path android:fillColor="#FFFFFF" android:pathData="M30,57 H78 V70 Q78,80 68,80 H40 Q30,80 30,70 Z" />
+    <path android:fillColor="#FFFFFF" android:pathData="M22,61 H30 V67 H22 Z M78,61 H86 V67 H78 Z" />
+    <path android:fillColor="#FFFFFF" android:pathData="M32,53 Q32,43 54,43 Q76,43 76,53 Z" />
+    <path android:fillColor="#FFFFFF" android:pathData="M51,40 a3,3 0 1,0 6,0 a3,3 0 1,0 -6,0" />
+    <path
+        android:pathData="M44,33 Q41,29 44,25 M54,32 Q51,28 54,24 M64,33 Q61,29 64,25"
+        android:strokeColor="#FFFFFF"
+        android:strokeLineCap="round"
+        android:strokeWidth="2.6" />
+</vector>

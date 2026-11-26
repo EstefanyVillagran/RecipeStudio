@@ -59,3 +59,10 @@ Hoy el servidor Python sigue manejando el QR, el chat y la sincronización de in
 - **Una sola cocina:** la dirección pública es una sola estación para todos. Quien abra la página ve la misma sesión. Para separar cocinas haría falta un código de sala por sesión (parte del paso a Firestore).
 - **Invitar a otro celular:** en la página de la estación, botón **➕ Invitar otro celular** (con Render funciona gracias a una llave que recibe la página antes de vincular; si recargas la página ya vinculada, desvincula y vuelve a empezar la sesión).
 - **Seguridad:** `local.properties` lleva tu clave de Gemini; no subas ese archivo ni lo compartas (el `.gitignore` ya lo excluye). Si lo enviaste en un zip, crea una clave nueva en aistudio.google.com/apikey.
+
+## 7. IMPORTANTE: vuelve a publicar las reglas cada vez que cambien
+Si ves `PERMISSION_DENIED` en el Muro, al escribir notas en soporte o al guardar una receta, casi siempre es porque en la consola
+quedó una versión vieja de las reglas. Copia TODO `firebase/firestore.rules` en Firestore > Reglas y pulsa **Publicar**.
+Colecciones que usa la app: `reportes`, `usuarios`, `progreso`, `muro` y `recetasPropias`.
+Para que el admin pueda **elegir al agente de una lista** (sin escribir su correo), cada agente debe entrar una vez al panel de soporte
+con la versión nueva de la app (así guarda su correo y nombre en su perfil).

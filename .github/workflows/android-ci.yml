@@ -1,0 +1,68 @@
+name: CI - Prácticas 13 y 14
+
+# Se ejecuta con cada push y cada pull request.
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  servidor-python:
+    name: Servidor (Python)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install coverage
+      - name: Pruebas del servidor con cobertura (instrucciones y ramas)
+        working-directory: backend
+        run: |
+          coverage run --branch -m unittest discover -p "test_*.py" -v
+          coverage report -m --include=server.py,s3_presign.py --fail-under=70
+
+  unit-and-integration-tests:
+    name: Android y núcleo KMM
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Descargar código
+        uses: actions/checkout@v4
+
+      - name: Configurar JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: google-services.json de prueba (solo si el repositorio no lo incluye)
+        run: |
+          if [ ! -f app/google-services.json ]; then
+            echo '{"project_info":{"project_number":"1","project_id":"ci-demo"},"client":[{"client_info":{"mobilesdk_app_id":"1:1:android:1","android_client_info":{"package_name":"com.recipestudio.kitchensync"}},"api_key":[{"current_key":"ci-demo-key"}]}],"configuration_version":"1"}' > app/google-services.json
+          fi
+
+      - name: Dar permiso al wrapper
+        run: chmod +x gradlew
+
+      - name: Ejecutar pruebas unitarias e integración (núcleo KMM y app)
+        run: ./gradlew :shared:testDebugUnitTest :app:testDebugUnitTest --stacktrace
+
+      - name: Ejecutar lint Android (informa, no bloquea)
+        continue-on-error: true
+        run: ./gradlew :app:lintDebug --stacktrace
+
+      - name: Subir informes de pruebas
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: informes-pruebas-android
+          path: |
+            app/build/reports/tests/testDebugUnitTest/
+            shared/build/reports/tests/
+            app/build/reports/lint-results-debug.html
+          if-no-files-found: warn

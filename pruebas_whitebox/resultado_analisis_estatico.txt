@@ -1,0 +1,51 @@
+=== ANÁLISIS ESTÁTICO - RecipeStudio ===
+
+--- 1. Complejidad ciclomática (Python: exacta) - top 8 ---
+  CC=15  _normalizar_url_publica      backend/server.py:57
+  CC=12  evento                       backend/server.py:300
+  CC=10  reportar                     backend/server.py:369
+  CC=10  crear_sesion_qr              backend/server.py:236
+  CC=9   _body                        backend/server.py:513
+  CC=9   login                        backend/server.py:167
+  CC=8   principal                    backend/server.py:200
+  CC=7   _dispatch                    backend/server.py:549
+
+--- 1. Complejidad ciclomática (Kotlin: aproximada) - top 8 ---
+  CC~19  esHostPrivadoOlocal          app/src/main/java/com/recipestudio/kitchensync/network/ServerConfig.kt:13
+  CC~19  mensajeFirebase              app/src/main/java/com/recipestudio/kitchensync/data/remote/FirebaseReportes.kt:40
+  CC~13  EstacionesScreen             app/src/main/java/com/recipestudio/kitchensync/ui/EstacionesScreen.kt:32
+  CC~11  SoporteScreen                app/src/main/java/com/recipestudio/kitchensync/ui/SoporteScreen.kt:36
+  CC~11  analizar                     app/src/main/java/com/recipestudio/kitchensync/network/GeminiSustitucion.kt:33
+  CC~10  SustitucionFotoPanel         app/src/main/java/com/recipestudio/kitchensync/ui/SustitucionFoto.kt:37
+  CC~10  refrescarEstadoDesdeServidor app/src/main/java/com/recipestudio/kitchensync/presentation/ui/RecipeStudioScreen.kt:275
+  CC~9   ResultadoIa                  app/src/main/java/com/recipestudio/kitchensync/ui/SustitucionFoto.kt:127
+
+--- 2. Patrones de riesgo ---
+  [2] Clave tipo API de Google
+        backend/admin.html:68
+        app/google-services.json:18
+  [6] Operador !! (puede lanzar NullPointerException)
+        app/src/main/java/com/recipestudio/kitchensync/presentation/ui/RecipeStudioScreen.kt:882
+        app/src/main/java/com/recipestudio/kitchensync/presentation/ui/RecipeStudioScreen.kt:932
+        app/src/main/java/com/recipestudio/kitchensync/ui/SoporteStaffScreen.kt:57
+        app/src/main/java/com/recipestudio/kitchensync/network/KitchenApi.kt:99
+        app/src/main/java/com/recipestudio/kitchensync/network/KitchenApi.kt:109
+        app/src/main/java/com/recipestudio/kitchensync/network/KitchenApi.kt:115
+  [1] URL http sin cifrar
+        app/src/main/java/com/recipestudio/kitchensync/security/InputValidator.kt:67
+  [20] catch genérico de Exception
+        app/src/main/java/com/recipestudio/kitchensync/presentation/ui/RecipeStudioScreen.kt:326
+        app/src/main/java/com/recipestudio/kitchensync/presentation/ui/RecipeStudioScreen.kt:357
+        app/src/main/java/com/recipestudio/kitchensync/presentation/ui/RecipeStudioScreen.kt:366
+        app/src/main/java/com/recipestudio/kitchensync/presentation/ui/RecipeStudioScreen.kt:542
+        app/src/main/java/com/recipestudio/kitchensync/presentation/ui/RecipeStudioScreen.kt:999
+        app/src/main/java/com/recipestudio/kitchensync/presentation/viewmodel/RecipeStudioViewModel.kt:46
+        ... y 14 más
+  [1] except Exception genérico
+        backend/server.py:583
+
+--- 3. Secretos fuera de Git ---
+  local.properties en .gitignore: SÍ
+
+Nota: la complejidad de Kotlin es una aproximación por conteo de decisiones; confirma con Android Studio
+(Analyze > Inspect Code) y con './gradlew lint'.

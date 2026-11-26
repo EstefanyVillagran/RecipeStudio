@@ -7,6 +7,9 @@ import unittest
 import urllib.error
 import urllib.request
 
+os.environ.setdefault("KITCHENSYNC_ADMIN_PASSWORD", "Admin2026!")   # las pruebas fijan sus credenciales
+os.environ.setdefault("KITCHENSYNC_AGENTE_PASSWORD", "Agente2026!")
+
 import server
 
 
@@ -253,3 +256,26 @@ class TestSoporte(Base):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestDefectosPractica11(Base):
+    """Regresiones de los defectos encontrados en la auditoría White Box (Práctica 11)."""
+
+    def test_wb_metodo_no_soportado_responde_405(self):
+        for metodo in ("PUT", "DELETE", "PATCH"):
+            self.assertEqual(self.call(metodo, "/estado")[0], 405, metodo)
+
+    def test_wb_log_message_acepta_codigos_numericos(self):
+        h = server.Handler.__new__(server.Handler)
+        h.client_address = ("127.0.0.1", 1)
+        h.log_message("code %d, message %s", 501, "x")        # antes: TypeError
+
+    def test_wb_no_hay_contrasenas_por_defecto_conocidas(self):
+        previos = {k: os.environ.pop(k, None) for k in ("KITCHENSYNC_ADMIN_PASSWORD", "KITCHENSYNC_AGENTE_PASSWORD")}
+        try:
+            server.CORE.__init__(base_url=self.url)
+            self.assertEqual(self.call("POST", "/login", {"usuario": "admin", "password": "Admin2026!"})[0], 401)
+        finally:
+            for k, v in previos.items():
+                if v is not None:
+                    os.environ[k] = v

@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#CF5A3A">
+  <title>RecipeStudio - Sin conexión</title>
+  <style>
+    body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center; background: #F7F4EE; color: #1E1E1E; font-family: 'Segoe UI', Tahoma, sans-serif; text-align: center; padding: 24px; }
+    .caja { background: #fff; border-radius: 24px; padding: 32px; max-width: 420px; box-shadow: 0 10px 30px rgba(0,0,0,.08); }
+    h1 { margin: 8px 0; font-size: 24px; } p { color: #666; line-height: 1.5; }
+    button { margin-top: 12px; background: #CF5A3A; color: #fff; border: 0; border-radius: 14px; padding: 12px 22px; font-weight: bold; font-size: 15px; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <div class="caja">
+    <div style="font-size:54px">📴</div>
+    <h1>Sin conexión</h1>
+    <p>No se pudo llegar a la estación de cocina. Revisa tu internet; en cuanto vuelva, la pantalla se actualiza sola con tu receta y tu temporizador.</p>
+    <button onclick="location.reload()">Reintentar</button>
+  </div>
+  <script>window.addEventListener('online', () => location.reload());</script>
+</body>
+</html>

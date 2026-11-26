@@ -4,6 +4,14 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>RecipeStudio - Estación de Cocina Dashboard</title>
+    <meta name="theme-color" content="#CF5A3A">
+    <meta name="description" content="Pantalla principal de la cocina: recetas, ingredientes y temporizador sincronizados con el celular.">
+    <link rel="manifest" href="/manifest.webmanifest">
+    <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png">
+    <link rel="apple-touch-icon" href="/icons/icon-192.png">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-title" content="RecipeStudio">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
@@ -60,6 +68,21 @@
         .tag { padding: 2px 8px; border-radius: 8px; font-size: 11px; font-weight: bold; background: #eee; }
         .tag.Alta { background: #fbe0d9; color: #b3391b; } .tag.Resuelto { background: #E8F2EA; color: #558B6E; }
         .err { color: #b3391b; font-size: 13px; margin-top: 8px; }
+        /* ---- PWA: diseño responsivo, aviso sin conexión y botón de instalar ---- */
+        #estado-red { display: none; position: fixed; top: 0; left: 0; right: 0; z-index: 50; background: #B3391B; color: #fff; text-align: center; padding: 8px 12px; font-size: 13px; font-weight: bold; }
+        #btn-instalar { position: fixed; right: 16px; bottom: 16px; z-index: 40; background: #CF5A3A; color: #fff; border: 0; border-radius: 14px; padding: 12px 18px; font-weight: bold; font-size: 14px; box-shadow: 0 6px 18px rgba(0,0,0,.25); cursor: pointer; }
+        @media (max-width: 900px) {
+            body { padding: 14px; }
+            .main-container { grid-template-columns: 1fr; }
+            .header { flex-direction: column; align-items: flex-start; gap: 10px; }
+            .recipe-title { font-size: 26px; }
+            .timer-bar { flex-direction: column; align-items: flex-start; gap: 8px; }
+        }
+        @media (max-width: 520px) {
+            .qr-card { padding: 18px; }
+            .timer-time { font-size: 28px; }
+        }
+        @media (display-mode: standalone) { body { padding-top: 18px; } }
     </style>
 </head>
 <body>
@@ -141,6 +164,9 @@
         <button class="btn btn-sec" id="cerrar-invitar">Cerrar</button>
     </div></div>
 
+    <div id="estado-red">📴 Sin conexión: se muestra la última versión guardada y se reconecta sola</div>
+    <button id="btn-instalar" hidden>📲 Instalar app</button>
+
     <script>
         const serverHost = "__SERVER_HOST__";
         const serverPort = "__SERVER_PORT__";
@@ -217,13 +243,24 @@
             }
 
             const recipeName = data.receta || 'Pasta al pomodoro';
-            const recipeData = recipeCatalog[recipeName] || recipeCatalog['Pasta al pomodoro'];
+            const det = data.recetaDetalle;
+            // Si el celular mandó la receta completa se muestra tal cual (recetas propias incluidas); si no, el catálogo local
+            const recipeData = det ? {
+                categoria: det.categoria || 'RECETA',
+                subtitulo: [det.tiempo, det.dificultad, det.porciones].filter(Boolean).join('  •  '),
+                paso: 'PASOS', pasoTitulo: 'Cómo prepararlo',
+                pasoDesc: det.instruccion || (det.pasos || []).map((p, i) => (i + 1) + '. ' + p).join('\n'),
+                chefTip: det.chefTip || 'Sin consejo para esta receta.',
+                ingredientes: det.ingredientes.map((i) => ({ nombre: i.nombre, cantidad: i.medida || '' }))
+            } : (recipeCatalog[recipeName] || recipeCatalog['Pasta al pomodoro']);
             document.getElementById('categoria').textContent = recipeData.categoria;
             document.getElementById('titulo').textContent = recipeName;
             document.getElementById('subtitulo').textContent = recipeData.subtitulo;
             document.getElementById('paso-num').textContent = recipeData.paso;
             document.getElementById('paso-titulo').textContent = recipeData.pasoTitulo;
-            document.getElementById('paso-desc').textContent = recipeData.pasoDesc;
+            const pasoDesc = document.getElementById('paso-desc');
+            pasoDesc.textContent = recipeData.pasoDesc;
+            pasoDesc.style.whiteSpace = 'pre-line';
             document.getElementById('chef-tip').textContent = recipeData.chefTip;
 
             const ingredientes = data.ingredientes || {};
@@ -240,7 +277,12 @@
             entries.forEach((ingredient) => {
                 const row = document.createElement('div');
                 row.className = 'ingredient-item' + (ingredient.completed ? ' completed' : '');
-                row.innerHTML = `<span>${ingredient.completed ? '✔️' : '⬜'} ${ingredient.nombre}</span><span>${ingredient.cantidad}</span>`;
+                // textContent (no innerHTML): los nombres vienen de los celulares y no deben poder inyectar HTML
+                const nombre = document.createElement('span');
+                nombre.textContent = (ingredient.completed ? '✔️ ' : '⬜ ') + ingredient.nombre;
+                const cantidad = document.createElement('span');
+                cantidad.textContent = ingredient.cantidad || '';
+                row.append(nombre, cantidad);
                 list.appendChild(row);
             });
 
@@ -267,6 +309,26 @@
         // Consultar el estado del servidor Python cada 800ms
         setInterval(pollState, 800);
         pollState();
+
+        // ---- PWA: service worker, instalación y estado de la red ----
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));
+        }
+        let eventoInstalar = null;
+        const btnInstalar = document.getElementById('btn-instalar');
+        window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); eventoInstalar = e; btnInstalar.hidden = false; });
+        btnInstalar.onclick = async () => {
+            if (!eventoInstalar) return;
+            eventoInstalar.prompt();
+            await eventoInstalar.userChoice;
+            eventoInstalar = null;
+            btnInstalar.hidden = true;
+        };
+        window.addEventListener('appinstalled', () => { btnInstalar.hidden = true; });
+        function actualizarRed() { document.getElementById('estado-red').style.display = navigator.onLine ? 'none' : 'block'; }
+        window.addEventListener('online', actualizarRed);
+        window.addEventListener('offline', actualizarRed);
+        actualizarRed();
     </script>
 </body>
 </html>
